@@ -1,0 +1,9 @@
+{
+  "generated": "2026-03-29",
+  "climate_source": "NOAA GML (CO2) + NASA GISS (temp)",
+  "country_source": "World Bank Open Data API",
+  "n_countries": 140,
+  "total_population": 7988059020,
+  "co2_ppm": 427.35,
+  "temperature_anomaly": 1.19
+}

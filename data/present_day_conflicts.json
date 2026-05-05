@@ -1,0 +1,115 @@
+[
+  {
+    "name": "Russia-Ukraine War",
+    "lat": 48.5,
+    "lng": 37.5,
+    "radius_deg": 5.0,
+    "intensity": 0.9,
+    "parties": [
+      "Russia",
+      "Ukraine"
+    ]
+  },
+  {
+    "name": "Sudan Civil War",
+    "lat": 15.5,
+    "lng": 32.5,
+    "radius_deg": 4.0,
+    "intensity": 0.8,
+    "parties": [
+      "SAF",
+      "RSF"
+    ]
+  },
+  {
+    "name": "Gaza/Israel Conflict",
+    "lat": 31.4,
+    "lng": 34.4,
+    "radius_deg": 1.5,
+    "intensity": 0.9,
+    "parties": [
+      "Israel",
+      "Hamas"
+    ]
+  },
+  {
+    "name": "Myanmar Civil War",
+    "lat": 19.8,
+    "lng": 96.2,
+    "radius_deg": 4.0,
+    "intensity": 0.7,
+    "parties": [
+      "Junta",
+      "NUG/EAO"
+    ]
+  },
+  {
+    "name": "Sahel Insurgency",
+    "lat": 14.0,
+    "lng": 2.0,
+    "radius_deg": 6.0,
+    "intensity": 0.6,
+    "parties": [
+      "JNIM",
+      "ISGS",
+      "Govt forces"
+    ]
+  },
+  {
+    "name": "Ethiopia (various)",
+    "lat": 9.0,
+    "lng": 38.7,
+    "radius_deg": 3.0,
+    "intensity": 0.5,
+    "parties": [
+      "Fano",
+      "ENDF",
+      "OLA"
+    ]
+  },
+  {
+    "name": "Yemen Civil War",
+    "lat": 15.4,
+    "lng": 44.2,
+    "radius_deg": 3.0,
+    "intensity": 0.6,
+    "parties": [
+      "Houthis",
+      "Saudi Coalition"
+    ]
+  },
+  {
+    "name": "Haiti Crisis",
+    "lat": 18.5,
+    "lng": -72.3,
+    "radius_deg": 1.0,
+    "intensity": 0.5,
+    "parties": [
+      "Gangs",
+      "Govt"
+    ]
+  },
+  {
+    "name": "DR Congo (Eastern)",
+    "lat": -1.5,
+    "lng": 29.0,
+    "radius_deg": 3.0,
+    "intensity": 0.7,
+    "parties": [
+      "M23",
+      "FARDC",
+      "Militias"
+    ]
+  },
+  {
+    "name": "Somalia (Al-Shabaab)",
+    "lat": 2.0,
+    "lng": 45.0,
+    "radius_deg": 4.0,
+    "intensity": 0.6,
+    "parties": [
+      "Al-Shabaab",
+      "SNA/ATMIS"
+    ]
+  }
+]

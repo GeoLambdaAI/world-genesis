@@ -1,0 +1,1759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>World Genesis — Earth</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0a0e17;
+            color: #e0e6ed;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        /* Top Bar */
+        #topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #111827;
+            border-bottom: 1px solid #1f2937;
+            padding: 8px 16px;
+            height: 48px;
+            z-index: 1000;
+            position: relative;
+        }
+
+        #topbar h1 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #60a5fa;
+            white-space: nowrap;
+        }
+        #topbar h1 span { color: #4ade80; font-size: 11px; margin-left: 6px; }
+
+        .controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .btn {
+            background: #1e3a5f;
+            color: #93c5fd;
+            border: 1px solid #2563eb;
+            padding: 5px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.15s;
+        }
+        .btn:hover { background: #2563eb; color: #fff; }
+        .btn.active { background: #16a34a; border-color: #22c55e; color: #fff; }
+        .btn.danger { background: #7f1d1d; border-color: #dc2626; color: #fca5a5; }
+        .btn.danger:hover { background: #dc2626; color: #fff; }
+
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #9ca3af;
+        }
+        .speed-control input[type="range"] {
+            width: 80px;
+            accent-color: #60a5fa;
+        }
+
+        /* Stats Bar */
+        #statsbar {
+            display: flex;
+            gap: 20px;
+            padding: 6px 16px;
+            background: #0f172a;
+            border-bottom: 1px solid #1e293b;
+            font-size: 12px;
+            height: 32px;
+            align-items: center;
+            overflow-x: auto;
+            z-index: 1000;
+            position: relative;
+        }
+        .stat { display: flex; gap: 4px; white-space: nowrap; }
+        .stat-label { color: #6b7280; }
+        .stat-value { color: #f9fafb; font-weight: 600; }
+        .stat-value.good { color: #4ade80; }
+        .stat-value.warn { color: #fbbf24; }
+
+        /* Main Layout */
+        #main {
+            display: flex;
+            height: calc(100vh - 80px);
+        }
+
+        /* Map */
+        #map {
+            flex: 1;
+            z-index: 1;
+        }
+
+        /* Resize handle — separate element between map and panel */
+        #panel-resize-handle {
+            flex: 0 0 6px;
+            cursor: col-resize;
+            background: #1f2937;
+            z-index: 1001;
+            transition: background 0.15s;
+        }
+        #panel-resize-handle:hover,
+        #panel-resize-handle.dragging {
+            background: #3b82f6;
+        }
+
+        /* Right Panel — resizable */
+        #panel {
+            width: 340px;
+            min-width: 200px;
+            max-width: 700px;
+            background: #111827;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+        }
+
+        .panel-section {
+            padding: 12px 14px;
+            border-bottom: 1px solid #1e293b;
+        }
+
+        .panel-section h3 {
+            font-size: 12px;
+            font-weight: 600;
+            color: #60a5fa;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .agent-card {
+            background: #1e293b;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 6px;
+        }
+
+        .agent-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .agent-name { font-size: 15px; font-weight: 700; color: #f0abfc; }
+        .agent-gen { font-size: 11px; color: #6b7280; background: #374151; padding: 1px 6px; border-radius: 10px; }
+
+        .bar-container { height: 6px; background: #374151; border-radius: 3px; margin: 3px 0; overflow: hidden; }
+        .bar { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+        .bar.energy { background: linear-gradient(90deg, #f59e0b, #eab308); }
+        .bar.health { background: linear-gradient(90deg, #ef4444, #22c55e); }
+        .bar.happiness { background: linear-gradient(90deg, #8b5cf6, #ec4899); }
+
+        .trait-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px; font-size: 11px; }
+        .trait-row { display: flex; justify-content: space-between; }
+        .trait-name { color: #9ca3af; }
+        .trait-val { color: #d1d5db; font-weight: 500; }
+
+        .skill-list { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+        .skill-row { display: flex; align-items: center; gap: 6px; }
+        .skill-name { color: #9ca3af; width: 60px; }
+        .skill-bar-bg { flex: 1; height: 4px; background: #374151; border-radius: 2px; }
+        .skill-bar-fill { height: 100%; background: #3b82f6; border-radius: 2px; transition: width 0.3s; }
+
+        #event-log { max-height: 200px; overflow-y: auto; font-size: 11px; }
+        .event-item { padding: 3px 0; border-bottom: 1px solid #1e293b; color: #9ca3af; }
+        .event-item .event-action { color: #60a5fa; font-weight: 500; }
+        .event-item .event-agent { color: #f0abfc; }
+
+        .chart-container { height: 100px; position: relative; }
+        .chart-container canvas { width: 100%; height: 100%; }
+
+        .settlement-item { background: #1e293b; border-radius: 6px; padding: 8px 10px; margin-bottom: 4px; font-size: 12px; }
+        .settlement-name { font-weight: 600; color: #fbbf24; }
+        .settlement-meta { color: #9ca3af; font-size: 11px; }
+
+        /* Tabs — sticky at top, scrollable horizontally for many tabs */
+        #tab-buttons {
+            display: flex;
+            border-bottom: 1px solid #1e293b;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+            scrollbar-color: #374151 transparent;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #111827;
+            flex-shrink: 0;
+        }
+        #tab-buttons::-webkit-scrollbar { height: 3px; }
+        #tab-buttons::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
+        .tab-btn {
+            flex: 0 0 auto; padding: 7px 10px; background: none; border: none;
+            color: #6b7280; cursor: pointer; font-size: 11px;
+            font-weight: 500; border-bottom: 2px solid transparent;
+            white-space: nowrap;
+        }
+        .tab-btn:hover { color: #93c5fd; }
+        .tab-btn.active { color: #60a5fa; border-bottom-color: #60a5fa; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Layer Control */
+        .layer-toggles { display: flex; flex-wrap: wrap; gap: 4px; }
+        .layer-btn {
+            font-size: 11px; padding: 3px 8px; background: #1e293b;
+            border: 1px solid #374151; border-radius: 4px; color: #9ca3af; cursor: pointer;
+        }
+        .layer-btn.active { border-color: #60a5fa; color: #60a5fa; background: #172554; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+        /* Leaflet overrides */
+        .leaflet-container { background: #0a1628; }
+        .agent-tooltip {
+            background: rgba(15, 23, 42, 0.95) !important;
+            border: 1px solid #374151 !important;
+            color: #e0e6ed !important;
+            font-size: 11px !important;
+            border-radius: 6px !important;
+            padding: 4px 8px !important;
+        }
+        .agent-tooltip .leaflet-tooltip-arrow { display: none; }
+    </style>
+</head>
+<body>
+
+<!-- Top Bar -->
+<div id="topbar">
+    <h1>World Genesis <span>Earth</span></h1>
+    <div class="controls">
+        <button class="btn" id="btn-start" onclick="startSim()">&#9654; Start</button>
+        <button class="btn" id="btn-stop" onclick="stopSim()">&#9632; Stop</button>
+        <button class="btn" id="btn-step" onclick="stepSim()">&#9193; Step</button>
+        <div class="speed-control">
+            <span>Speed:</span>
+            <input type="range" id="speed-slider" min="0.5" max="30" step="0.5" value="5" oninput="setSpeed(this.value)">
+            <span id="speed-label">5x</span>
+        </div>
+        <select id="scenario-select" style="background:#1e293b;color:#93c5fd;border:1px solid #374151;border-radius:4px;padding:3px 6px;font-size:12px;">
+            <option value="historical">70,000yr History</option>
+            <option value="present_day">Present Day</option>
+        </select>
+        <button class="btn danger" onclick="resetSim()">Reset</button>
+        <select id="tile-select" onchange="switchTiles(this.value)" style="background:#1e293b;color:#93c5fd;border:1px solid #374151;border-radius:4px;padding:3px 6px;font-size:12px;">
+            <option value="satellite">Satellite</option>
+            <option value="osm">OpenStreetMap</option>
+            <option value="topo">Topographic</option>
+            <option value="dark">Dark</option>
+        </select>
+    </div>
+</div>
+
+<!-- Stats Bar -->
+<div id="statsbar">
+    <div class="stat"><span class="stat-label">Tick:</span><span class="stat-value" id="s-tick">0</span></div>
+    <div class="stat"><span class="stat-label">Population:</span><span class="stat-value good" id="s-pop">0</span></div>
+    <div class="stat"><span class="stat-label">Born:</span><span class="stat-value" id="s-born">0</span></div>
+    <div class="stat"><span class="stat-label">Avg Energy:</span><span class="stat-value" id="s-energy">0</span></div>
+    <div class="stat"><span class="stat-label">Avg Wealth:</span><span class="stat-value" id="s-wealth">0</span></div>
+    <div class="stat"><span class="stat-label">Avg Happiness:</span><span class="stat-value" id="s-happy">0</span></div>
+    <div class="stat"><span class="stat-label">Max Gen:</span><span class="stat-value warn" id="s-gen">0</span></div>
+    <div class="stat"><span class="stat-label">Businesses:</span><span class="stat-value" id="s-biz">0</span></div>
+    <div class="stat"><span class="stat-label">Settlements:</span><span class="stat-value" id="s-sett">0</span></div>
+    <div class="stat" style="border-left:1px solid #374151;padding-left:12px"><span class="stat-label">Year:</span><span class="stat-value warn" id="s-year" style="min-width:80px">68,000 BCE</span></div>
+    <div class="stat"><span class="stat-label">Era:</span><span class="stat-value" id="s-era" style="color:#c084fc;max-width:120px;overflow:hidden;text-overflow:ellipsis">Out of Africa</span></div>
+    <div class="stat"><span class="stat-label">CO2:</span><span class="stat-value" id="s-co2">200</span></div>
+    <div class="stat"><span class="stat-label">Temp:</span><span class="stat-value" id="s-temp">-6.0C</span></div>
+    <div class="stat"><span class="stat-label">Techs:</span><span class="stat-value" id="s-techs" style="color:#06b6d4">0</span></div>
+    <div class="stat"><span class="stat-label">Tension:</span><span class="stat-value" id="s-tension">0</span></div>
+    <div class="stat"><span class="stat-label">Nations:</span><span class="stat-value" id="s-nations">0</span></div>
+</div>
+
+<!-- Main Layout -->
+<div id="main">
+    <div id="map"></div>
+
+    <!-- Resize Handle (between map and panel) -->
+    <div id="panel-resize-handle" title="Drag to resize panel"></div>
+
+    <!-- Right Panel (resizable) -->
+    <div id="panel">
+        <div id="tab-buttons">
+            <button class="tab-btn active" data-tab="selected" onclick="switchTab('selected', event)">Agent</button>
+            <button class="tab-btn" data-tab="macro" onclick="switchTab('macro', event)">Macro</button>
+            <button class="tab-btn" data-tab="nations" onclick="switchTab('nations', event)">Nations</button>
+            <button class="tab-btn" data-tab="chat" onclick="switchTab('chat', event)">Chat</button>
+            <button class="tab-btn" data-tab="llm" onclick="switchTab('llm', event)">LLM</button>
+            <button class="tab-btn" data-tab="god" onclick="switchTab('god', event)">God</button>
+            <button class="tab-btn" data-tab="log" onclick="switchTab('log', event)">Log</button>
+            <button class="tab-btn" data-tab="events" onclick="switchTab('events', event)">Events</button>
+            <button class="tab-btn" data-tab="charts" onclick="switchTab('charts', event)">Charts</button>
+        </div>
+
+        <div id="tab-selected" class="tab-content active">
+            <div class="panel-section">
+                <h3>Selected Agent</h3>
+                <div id="agent-detail">
+                    <p style="color: #6b7280; font-size: 13px;">Click an agent on the map to inspect it.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Macro Tab -->
+        <div id="tab-macro" class="tab-content">
+            <div class="panel-section">
+                <h3>Global State</h3>
+                <div id="macro-dashboard" style="font-size:12px">
+                    <div style="color:#6b7280">Waiting for data...</div>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>Climate</h3>
+                <div class="chart-container"><canvas id="chart-co2"></canvas></div>
+            </div>
+            <div class="panel-section">
+                <h3>Social Tension</h3>
+                <div class="chart-container"><canvas id="chart-tension"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Nations Tab -->
+        <div id="tab-nations" class="tab-content">
+            <div class="panel-section">
+                <h3>Geopolitics</h3>
+                <div id="geopolitics-summary" style="font-size:12px">
+                    <div style="color:#6b7280">No nations formed yet.</div>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>Nations</h3>
+                <div id="nations-list"></div>
+            </div>
+            <div class="panel-section">
+                <h3>Active Conflicts</h3>
+                <div id="conflicts-list"></div>
+            </div>
+        </div>
+
+        <!-- LLM Tab -->
+        <div id="tab-llm" class="tab-content">
+            <div class="panel-section">
+                <h3>LLM Social Cognition</h3>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                    <label style="font-size:12px;color:#9ca3af">Enable:</label>
+                    <input type="checkbox" id="llm-toggle" onchange="toggleLLM(this.checked)">
+                    <span id="llm-indicator" style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block"></span>
+                    <span id="llm-status-text" style="font-size:11px;color:#6b7280">Disabled</span>
+                </div>
+                <div style="font-size:11px;margin-bottom:6px">
+                    <label style="color:#9ca3af">Provider:</label>
+                    <select id="llm-provider" style="background:#1e293b;color:#e0e6ed;border:1px solid #374151;border-radius:4px;padding:2px 4px;font-size:11px" onchange="onProviderChange()">
+                        <option value="ollama" selected>Ollama (Local)</option>
+                        <option value="mistral">Mistral AI (EU)</option>
+                    </select>
+                </div>
+                <div style="font-size:11px;margin-bottom:6px">
+                    <label style="color:#9ca3af">API Key:</label>
+                    <input type="password" id="llm-api-key" placeholder="Enter Mistral API key..." style="background:#1e293b;color:#e0e6ed;border:1px solid #374151;border-radius:4px;padding:2px 6px;font-size:11px;width:200px" onchange="updateLLMConfig()">
+                </div>
+                <div style="font-size:11px;margin-bottom:6px">
+                    <label style="color:#9ca3af">Model:</label>
+                    <input type="text" id="llm-model" value="qwen3:8b" style="background:#1e293b;color:#e0e6ed;border:1px solid #374151;border-radius:4px;padding:2px 6px;font-size:11px;width:160px" onchange="updateLLMConfig()">
+                </div>
+                <div style="font-size:11px;margin-bottom:6px">
+                    <label style="color:#9ca3af">URL:</label>
+                    <input type="text" id="llm-url" value="http://localhost:11434" style="background:#1e293b;color:#e0e6ed;border:1px solid #374151;border-radius:4px;padding:2px 6px;font-size:11px;width:200px" onchange="updateLLMConfig()">
+                </div>
+                <button class="btn" onclick="testLLM()" style="font-size:11px;padding:3px 8px">Test Connection</button>
+                <div id="llm-test-result" style="font-size:11px;color:#6b7280;margin-top:4px"></div>
+            </div>
+            <div class="panel-section">
+                <h3>Stats</h3>
+                <div id="llm-stats" style="font-size:11px;color:#9ca3af">No calls yet.</div>
+            </div>
+            <div class="panel-section">
+                <h3>Dialogue Feed</h3>
+                <div id="dialogue-feed" style="max-height:300px;overflow-y:auto;font-size:11px"></div>
+            </div>
+        </div>
+
+        <!-- Chat Tab -->
+        <div id="tab-chat" class="tab-content">
+            <div class="panel-section">
+                <h3 id="chat-title">Chat</h3>
+                <div id="chat-target-info" style="font-size:11px;color:#6b7280;margin-bottom:6px">
+                    Click an agent on the map to start chatting.
+                </div>
+                <div style="display:flex;gap:4px;margin-bottom:6px">
+                    <button class="btn" onclick="chatModeAgent()" id="chat-mode-single" style="font-size:10px;padding:2px 8px;background:#1e3a5f">Single Agent</button>
+                    <button class="btn" onclick="chatModeGroup()" id="chat-mode-group" style="font-size:10px;padding:2px 8px">Nearby Group</button>
+                </div>
+            </div>
+            <div class="panel-section" style="flex:1;display:flex;flex-direction:column;min-height:200px">
+                <div id="chat-messages" style="flex:1;overflow-y:auto;max-height:400px;font-size:12px;padding:4px"></div>
+                <div style="display:flex;gap:4px;margin-top:6px">
+                    <input type="text" id="chat-input" placeholder="Type your message..." style="flex:1;background:#1e293b;color:#e0e6ed;border:1px solid #374151;border-radius:6px;padding:6px 10px;font-size:12px" onkeydown="if(event.key==='Enter')sendChat()">
+                    <button class="btn" onclick="sendChat()" style="font-size:11px;padding:4px 12px">Send</button>
+                </div>
+                <div style="display:flex;gap:4px;margin-top:4px;align-items:center">
+                    <span style="font-size:10px;color:#6b7280">Speak as:</span>
+                    <select id="chat-context" style="background:#1e293b;color:#9ca3af;border:1px solid #374151;border-radius:4px;padding:2px 4px;font-size:10px">
+                        <option value="as_peer">Fellow Person</option>
+                        <option value="as_trader">Traveling Merchant</option>
+                        <option value="as_god">Divine Voice</option>
+                    </select>
+                    <span style="font-size:10px;color:#4ade80;margin-top:0px">Works without LLM!</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- God Mode Tab -->
+        <div id="tab-god" class="tab-content">
+            <div class="panel-section">
+                <h3>God Mode</h3>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                    <label style="font-size:12px;color:#9ca3af">Enable:</label>
+                    <input type="checkbox" id="god-toggle" onchange="toggleGodMode(this.checked)">
+                    <span style="font-size:11px;color:#fbbf24">Divine interventions</span>
+                </div>
+                <div style="font-size:10px;color:#6b7280;line-height:1.4">
+                    <b>How it works:</b><br>
+                    1. <b>Click the map</b> to set a target location<br>
+                    2. <b>Click an agent</b> to select them for whispers<br>
+                    3. Use the buttons below to intervene in the world
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>Whisper to Agent</h3>
+                <div style="font-size:11px;margin-bottom:4px">
+                    <span style="color:#6b7280">Target: </span>
+                    <span id="god-whisper-target" style="color:#f0abfc">Click an agent on the map</span>
+                </div>
+                <div style="display:flex;gap:4px">
+                    <input type="text" id="god-whisper-msg" placeholder="Divine message..." style="flex:1;background:#1e293b;color:#e0e6ed;border:1px solid #374151;border-radius:4px;padding:4px 6px;font-size:11px">
+                    <button class="btn" onclick="godWhisper()" style="font-size:10px;padding:2px 8px">Whisper</button>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>Commandment (Area Broadcast)</h3>
+                <div style="font-size:11px">
+                    <input type="text" id="god-cmd-msg" placeholder="Thou shalt..." style="width:100%;background:#1e293b;color:#e0e6ed;border:1px solid #374151;border-radius:4px;padding:4px 6px;font-size:11px;margin-bottom:4px;box-sizing:border-box">
+                    <div style="display:flex;gap:4px;align-items:center">
+                        <span style="color:#6b7280">Radius:</span>
+                        <input type="number" id="god-cmd-radius" value="10" step="1" style="background:#1e293b;color:#e0e6ed;border:1px solid #374151;border-radius:4px;padding:2px 4px;width:50px;font-size:11px">
+                        <span style="color:#6b7280">deg</span>
+                        <button class="btn" onclick="godCommandment()" style="font-size:10px;padding:2px 8px">Broadcast</button>
+                    </div>
+                    <div style="font-size:10px;color:#6b7280;margin-top:3px">Targets last map click location.</div>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>World Events</h3>
+                <div style="display:flex;flex-wrap:wrap;gap:4px">
+                    <button class="btn danger" onclick="godEvent('drought')" style="font-size:10px;padding:3px 8px">Drought</button>
+                    <button class="btn danger" onclick="godEvent('plague')" style="font-size:10px;padding:3px 8px">Plague</button>
+                    <button class="btn" onclick="godEvent('discovery')" style="font-size:10px;padding:3px 8px;background:#065f46;border-color:#059669">Resource</button>
+                    <button class="btn" onclick="godEvent('tech')" style="font-size:10px;padding:3px 8px;background:#1e3a5f">Tech Gift</button>
+                    <button class="btn" onclick="godEvent('climate')" style="font-size:10px;padding:3px 8px;background:#7f1d1d;border-color:#dc2626">Climate+1C</button>
+                </div>
+                <div style="font-size:10px;color:#6b7280;margin-top:4px">Events target last map click location.</div>
+            </div>
+            <div class="panel-section">
+                <h3>Active Effects</h3>
+                <div id="god-effects" style="font-size:11px;color:#9ca3af">None</div>
+            </div>
+        </div>
+
+        <!-- Logger Tab -->
+        <div id="tab-log" class="tab-content">
+            <div class="panel-section">
+                <h3>Scientific Logger</h3>
+                <div id="logger-status" style="font-size:12px;margin-bottom:8px">
+                    <span style="color:#4ade80">Recording</span>
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                    <a href="/api/logger/download" target="_blank" class="btn" style="font-size:11px;padding:4px 10px;text-decoration:none">Download CSV</a>
+                    <button class="btn" onclick="fetchLoggerRuns()" style="font-size:11px;padding:4px 10px">List All Runs</button>
+                </div>
+                <div id="logger-info" style="font-size:11px;color:#9ca3af">
+                    Logging every tick. CSV includes 70+ metrics: population, wealth distribution,
+                    macro state (CO2, temperature, tension), geopolitics, resources, spatial spread,
+                    JEPA model stats, and tick performance.
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>Current Run</h3>
+                <div id="logger-current" style="font-size:11px;color:#9ca3af">
+                    <div>Run ID: <span id="log-run-id">—</span></div>
+                    <div>Rows written: <span id="log-rows" style="color:#4ade80">0</span></div>
+                    <div>Interval: every <span id="log-interval">1</span> tick(s)</div>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>Key Metrics (Live)</h3>
+                <div style="font-size:11px">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                        <span style="color:#9ca3af">Wealth Gini:</span>
+                        <span id="log-gini" style="color:#fbbf24">—</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                        <span style="color:#9ca3af">Median Wealth:</span>
+                        <span id="log-median-wealth">—</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                        <span style="color:#9ca3af">Geographic Spread:</span>
+                        <span id="log-spread">—</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                        <span style="color:#9ca3af">Total Resources:</span>
+                        <span id="log-resources">—</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                        <span style="color:#9ca3af">Tick Duration:</span>
+                        <span id="log-tick-ms">—</span>
+                    </div>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>Previous Runs</h3>
+                <div id="logger-runs" style="font-size:11px;color:#6b7280;max-height:200px;overflow-y:auto">
+                    Click "List All Runs" to load.
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>CSV Columns (70+)</h3>
+                <div style="font-size:10px;color:#6b7280;max-height:150px;overflow-y:auto">
+                    tick, year_display, year_bp, year_ce, era_name, population, total_born,
+                    births, deaths, avg_age, max_generation, avg_energy, avg_health, avg_wealth,
+                    avg_happiness, median_wealth, wealth_gini, std_wealth, avg_intelligence,
+                    avg_cooperation, avg_ambition, avg_curiosity, pct_eating, pct_working,
+                    pct_trading, pct_exploring, pct_socializing, pct_reproducing, pct_researching,
+                    pct_governing, pct_migrating, n_businesses, n_settlements, macro_co2_ppm,
+                    macro_temperature, macro_sea_level_m, macro_fossil_fuels, macro_minerals,
+                    macro_pollution, macro_population_B, macro_gdp_index, macro_inequality,
+                    macro_social_tension, macro_technology, macro_renewable_frac, macro_food_index,
+                    macro_welfare, n_nations, n_active_conflicts, total_trade_volume,
+                    avg_diplomatic_trust, conflict_intensity, total_food, total_minerals,
+                    total_wood, total_water, agent_lat_mean, agent_lng_mean, agent_spread_deg,
+                    world_model_train_steps, world_model_buffer_size, tick_duration_ms
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-world" class="tab-content">
+            <div class="panel-section">
+                <h3>Map Tiles</h3>
+                <div class="layer-toggles">
+                    <button class="layer-btn active" data-tile="satellite" onclick="switchTiles('satellite')">Satellite</button>
+                    <button class="layer-btn" data-tile="osm" onclick="switchTiles('osm')">Street Map</button>
+                    <button class="layer-btn" data-tile="topo" onclick="switchTiles('topo')">Topographic</button>
+                    <button class="layer-btn" data-tile="dark" onclick="switchTiles('dark')">Dark</button>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>Settlements</h3>
+                <div id="settlement-list"></div>
+            </div>
+        </div>
+
+        <div id="tab-events" class="tab-content">
+            <div class="panel-section">
+                <h3>Event Log</h3>
+                <div id="event-log"></div>
+            </div>
+        </div>
+
+        <div id="tab-charts" class="tab-content">
+            <div class="panel-section">
+                <h3>Population</h3>
+                <div class="chart-container"><canvas id="chart-pop"></canvas></div>
+            </div>
+            <div class="panel-section">
+                <h3>Economy</h3>
+                <div class="chart-container"><canvas id="chart-econ"></canvas></div>
+            </div>
+            <div class="panel-section">
+                <h3>Happiness</h3>
+                <div class="chart-container"><canvas id="chart-happy"></canvas></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+// ============================================================================
+// State
+// ============================================================================
+let state = null;
+let selectedAgent = null;
+let socket = null;
+let agentMarkers = {};
+let settlementMarkers = {};
+let businessMarkers = {};
+let trailLines = {};
+
+// Events buffer
+const eventBuffer = [];
+const MAX_EVENTS = 150;
+
+// Chart data
+const chartData = { pop: [], wealth: [], happiness: [], co2: [], tension: [] };
+let conflictCircles = [];
+let nationMarkers = [];
+
+// Action colors
+const ACTION_COLORS = {
+    eat: '#22c55e', work: '#3b82f6', trade: '#eab308',
+    socialize: '#ec4899', reproduce: '#f43e5c', explore: '#8b5cf6',
+    research: '#06b6d4', build_business: '#f97316', govern: '#fbbf24',
+    heal: '#ef4444', idle: '#6b7280', wander: '#a78bfa'
+};
+
+// ============================================================================
+// Leaflet Map Setup
+// ============================================================================
+const map = L.map('map', {
+    center: [20, 10],
+    zoom: 3,
+    minZoom: 2,
+    maxZoom: 18,
+    worldCopyJump: true,
+    zoomControl: true,
+});
+
+// Tile layers
+const tileLayers = {
+    satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '&copy; Esri',
+        maxZoom: 18,
+    }),
+    osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap',
+        maxZoom: 19,
+    }),
+    topo: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenTopoMap',
+        maxZoom: 17,
+    }),
+    dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; CartoDB',
+        maxZoom: 19,
+    }),
+};
+
+// Start with satellite
+let currentTileLayer = tileLayers.satellite;
+currentTileLayer.addTo(map);
+
+function switchTiles(name) {
+    if (currentTileLayer) map.removeLayer(currentTileLayer);
+    currentTileLayer = tileLayers[name] || tileLayers.satellite;
+    currentTileLayer.addTo(map);
+    // Update button states
+    document.querySelectorAll('.layer-btn[data-tile]').forEach(b => {
+        b.classList.toggle('active', b.dataset.tile === name);
+    });
+    document.getElementById('tile-select').value = name;
+}
+
+// Agent layer group (above tiles)
+const agentLayer = L.layerGroup().addTo(map);
+const settlementLayer = L.layerGroup().addTo(map);
+const businessLayer = L.layerGroup().addTo(map);
+const trailLayer = L.layerGroup().addTo(map);
+
+// ============================================================================
+// Socket Connection
+// ============================================================================
+socket = io();
+
+socket.on('connect', () => {
+    console.log('Connected to simulation server');
+});
+
+socket.on('full_state', (data) => {
+    state = data;
+    try { updateAgents(data.agents); } catch(e) { console.error('updateAgents:', e); }
+    try { updateSettlements(data.settlements); } catch(e) { console.error('updateSettlements:', e); }
+    try { updateBusinesses(data.businesses); } catch(e) { console.error('updateBusinesses:', e); }
+    try { updateStats(data.stats); } catch(e) { console.error('updateStats:', e); }
+    try { updateSettlementList(); } catch(e) { console.error('updateSettlementList:', e); }
+    try { updateMacroDashboard(data.macro); } catch(e) { console.error('updateMacroDashboard:', e); }
+    try { updateNationsList(data.nations, data.conflicts); } catch(e) { console.error('updateNationsList:', e); }
+    try { updateConflictOverlay(data.conflicts); } catch(e) { console.error('updateConflictOverlay:', e); }
+    try { updateDialogueFeed(); } catch(e) { console.error('updateDialogueFeed:', e); }
+    try { updateLLMStats(data.stats); } catch(e) { console.error('updateLLMStats:', e); }
+    try { updateGodModeUI(data.stats); } catch(e) { console.error('updateGodModeUI:', e); }
+    try { updateLoggerUI(data); } catch(e) { console.error('updateLoggerUI:', e); }
+    if (selectedAgent) {
+        const a = data.agents.find(a => a.id === selectedAgent.id);
+        if (a) { selectedAgent = a; renderAgentDetail(a); }
+    }
+});
+
+socket.on('tick', (stats) => {
+    updateStats(stats);
+    if (stats.events) {
+        stats.events.forEach(e => {
+            eventBuffer.unshift(e);
+            if (eventBuffer.length > MAX_EVENTS) eventBuffer.pop();
+        });
+        renderEventLog();
+    }
+    chartData.pop.push(stats.population);
+    chartData.wealth.push(stats.avg_wealth);
+    chartData.happiness.push(stats.avg_happiness);
+    if (stats.macro) {
+        chartData.co2.push(stats.macro.co2_ppm);
+        chartData.tension.push(stats.macro.social_tension);
+    }
+    if (chartData.pop.length > 300) {
+        chartData.pop.shift(); chartData.wealth.shift(); chartData.happiness.shift();
+        chartData.co2.shift(); chartData.tension.shift();
+    }
+});
+
+socket.on('agent_detail', (data) => {
+    if (data) { selectedAgent = data; renderAgentDetail(data); }
+});
+
+socket.on('status', (data) => {
+    document.getElementById('btn-start').classList.toggle('active', data.running);
+});
+
+// ============================================================================
+// Controls
+// ============================================================================
+function startSim() { socket.emit('start'); }
+function stopSim() { socket.emit('stop'); }
+function stepSim() { socket.emit('step'); }
+function resetSim() {
+    const scenario = document.getElementById('scenario-select').value;
+    const agents = scenario === 'present_day' ? 300 : 25;
+    socket.emit('reset', { seed: Math.floor(Math.random() * 10000), agents: agents, scenario: scenario });
+}
+function setSpeed(val) {
+    document.getElementById('speed-label').textContent = val + 'x';
+    socket.emit('set_speed', { speed: parseFloat(val) });
+}
+
+// ============================================================================
+// Tabs
+// ============================================================================
+function switchTab(name, evt) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    // Find the button that matches this tab name
+    const btn = evt ? evt.currentTarget : document.querySelector(`.tab-btn[data-tab="${name}"]`);
+    if (btn) btn.classList.add('active');
+    const panel = document.getElementById('tab-' + name);
+    if (panel) panel.classList.add('active');
+    if (name === 'charts') renderCharts();
+    if (name === 'macro') renderMacroCharts();
+}
+
+function switchTabDirect(name) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+    if (btn) btn.classList.add('active');
+    const panel = document.getElementById('tab-' + name);
+    if (panel) panel.classList.add('active');
+}
+
+// ============================================================================
+// Agent Rendering on Leaflet
+// ============================================================================
+function updateAgents(agents) {
+    if (!agents) return;
+
+    const existingIds = new Set();
+
+    agents.forEach(a => {
+        if (!a.alive) return;
+        existingIds.add(a.id);
+
+        const color = ACTION_COLORS[a.current_action] || '#6b7280';
+        const isSelected = selectedAgent && selectedAgent.id === a.id;
+        const radius = isSelected ? 7 : (4 + Math.min(2, a.generation * 0.5));
+
+        if (agentMarkers[a.id]) {
+            // Update existing marker
+            const marker = agentMarkers[a.id];
+            marker.setLatLng([a.lat, a.lng]);
+            marker.setStyle({
+                fillColor: color,
+                color: isSelected ? '#ffffff' : color,
+                weight: isSelected ? 2 : 1,
+                radius: radius,
+                fillOpacity: 0.85,
+            });
+        } else {
+            // Create new marker
+            const marker = L.circleMarker([a.lat, a.lng], {
+                radius: radius,
+                fillColor: color,
+                color: color,
+                weight: 1,
+                fillOpacity: 0.85,
+                className: 'agent-marker',
+            });
+
+            marker.on('click', () => {
+                selectedAgent = a;
+                socket.emit('select_agent', { id: a.id });
+                switchTabDirect('selected');
+                updateAgents(state.agents); // Refresh to show selection
+            });
+
+            marker.bindTooltip('', {
+                className: 'agent-tooltip',
+                direction: 'top',
+                offset: [0, -8],
+            });
+
+            marker.addTo(agentLayer);
+            agentMarkers[a.id] = marker;
+        }
+
+        // Update tooltip
+        const marker = agentMarkers[a.id];
+        marker.setTooltipContent(
+            `<strong style="color:#f0abfc">${a.name}</strong> <span style="color:#6b7280">Gen ${a.generation}</span><br>` +
+            `Action: <span style="color:${color}">${a.current_action}</span><br>` +
+            `E:${a.energy.toFixed(0)} H:${a.health.toFixed(0)} W:${a.wealth.toFixed(0)}`
+        );
+
+        // Velocity trail
+        if (a.vlat !== undefined && (Math.abs(a.vlat) > 0.002 || Math.abs(a.vlng) > 0.002)) {
+            const trailScale = 30;
+            const trailEnd = [a.lat - a.vlat * trailScale, a.lng - a.vlng * trailScale];
+            if (trailLines[a.id]) {
+                trailLines[a.id].setLatLngs([[a.lat, a.lng], trailEnd]);
+                trailLines[a.id].setStyle({ color: color, opacity: 0.4 });
+            } else {
+                trailLines[a.id] = L.polyline([[a.lat, a.lng], trailEnd], {
+                    color: color, weight: 1.5, opacity: 0.4,
+                }).addTo(trailLayer);
+            }
+        } else if (trailLines[a.id]) {
+            trailLayer.removeLayer(trailLines[a.id]);
+            delete trailLines[a.id];
+        }
+    });
+
+    // Remove dead agent markers
+    for (const id in agentMarkers) {
+        if (!existingIds.has(parseInt(id))) {
+            agentLayer.removeLayer(agentMarkers[id]);
+            delete agentMarkers[id];
+            if (trailLines[id]) {
+                trailLayer.removeLayer(trailLines[id]);
+                delete trailLines[id];
+            }
+        }
+    }
+}
+
+function updateSettlements(settlements) {
+    if (!settlements) return;
+    // Clear and rebuild
+    settlementLayer.clearLayers();
+    settlementMarkers = {};
+
+    settlements.forEach(s => {
+        const radius = 10 + s.population * 0.5;
+        const circle = L.circle([s.lat, s.lng], {
+            radius: radius * 5000, // meters
+            color: '#fbbf24',
+            fillColor: '#fbbf24',
+            fillOpacity: 0.15,
+            weight: 1,
+        }).addTo(settlementLayer);
+
+        const label = L.marker([s.lat, s.lng], {
+            icon: L.divIcon({
+                className: '',
+                html: `<div style="color:#fbbf24;font-size:11px;font-weight:bold;text-shadow:1px 1px 2px #000;white-space:nowrap;text-align:center;transform:translate(-50%,-50%)">${s.name}<br><span style="font-size:9px;color:#d1d5db">Pop: ${s.population} | ${s.governance}</span></div>`,
+                iconSize: [100, 30],
+                iconAnchor: [50, 15],
+            })
+        }).addTo(settlementLayer);
+
+        settlementMarkers[s.id] = { circle, label };
+    });
+}
+
+function updateBusinesses(businesses) {
+    if (!businesses) return;
+    businessLayer.clearLayers();
+    businesses.forEach(b => {
+        L.circleMarker([b.lat, b.lng], {
+            radius: 4,
+            fillColor: '#3b82f6',
+            color: '#3b82f6',
+            weight: 1,
+            fillOpacity: 0.7,
+        }).bindTooltip(`${b.type} (Capital: ${b.capital.toFixed(0)})`, {
+            className: 'agent-tooltip',
+        }).addTo(businessLayer);
+    });
+}
+
+// ============================================================================
+// UI Updates
+// ============================================================================
+function updateStats(stats) {
+    if (!stats) return;
+    document.getElementById('s-tick').textContent = stats.tick || 0;
+    document.getElementById('s-pop').textContent = stats.population || 0;
+    document.getElementById('s-born').textContent = stats.total_born || 0;
+    document.getElementById('s-energy').textContent = (stats.avg_energy || 0).toFixed(1);
+    document.getElementById('s-wealth').textContent = (stats.avg_wealth || 0).toFixed(1);
+    document.getElementById('s-happy').textContent = (stats.avg_happiness || 0).toFixed(1);
+    document.getElementById('s-gen').textContent = stats.max_generation || 0;
+    document.getElementById('s-biz').textContent = stats.businesses || 0;
+    document.getElementById('s-sett').textContent = stats.settlements || 0;
+
+    // History stats (primary timeline)
+    if (stats.history) {
+        const h = stats.history;
+        document.getElementById('s-year').textContent = h.year_display || '68,000 BCE';
+        document.getElementById('s-era').textContent = h.era_name || 'Unknown';
+        document.getElementById('s-co2').textContent = (h.co2_ppm || 200).toFixed(0);
+        const temp = h.temperature_anomaly || 0;
+        const tempEl = document.getElementById('s-temp');
+        tempEl.textContent = (temp >= 0 ? '+' : '') + temp.toFixed(1) + 'C';
+        tempEl.className = 'stat-value' + (temp < -4 ? ' warn' : temp > 2.0 ? ' warn' : '');
+        document.getElementById('s-techs').textContent = h.n_techs_discovered || 0;
+    }
+    // Macro stats (modern era only)
+    if (stats.macro && stats.macro.social_tension !== undefined) {
+        const tension = stats.macro.social_tension || 0;
+        const tensionEl = document.getElementById('s-tension');
+        tensionEl.textContent = (tension * 100).toFixed(0) + '%';
+        tensionEl.className = 'stat-value' + (tension > 0.5 ? ' warn' : '');
+    }
+    if (stats.geopolitics) {
+        document.getElementById('s-nations').textContent = stats.geopolitics.nations || 0;
+    }
+}
+
+function renderAgentDetail(a) {
+    if (!a) return;
+    const div = document.getElementById('agent-detail');
+    const traits = a.traits ? Object.entries(a.traits).map(([k, v]) =>
+        `<div class="trait-row"><span class="trait-name">${k}</span><span class="trait-val">${(v*100).toFixed(0)}%</span></div>`
+    ).join('') : '';
+
+    const skills = (a.top_skills || []).map(([name, val]) =>
+        `<div class="skill-row"><span class="skill-name">${name}</span>
+         <div class="skill-bar-bg"><div class="skill-bar-fill" style="width:${val*100}%"></div></div>
+         <span style="font-size:10px;color:#9ca3af">${(val*100).toFixed(1)}%</span></div>`
+    ).join('');
+
+    const mem = a.memory_summary || {};
+    const wm = a.world_model || {};
+    const color = ACTION_COLORS[a.current_action] || '#6b7280';
+
+    div.innerHTML = `
+        <div class="agent-card">
+            <div class="agent-header">
+                <span class="agent-name">${a.name}</span>
+                <span class="agent-gen">Gen ${a.generation}</span>
+            </div>
+            <div style="font-size:11px;color:#9ca3af;margin-bottom:6px">
+                Age: ${a.age} | Action: <span style="color:${color}">${a.current_action}</span> | Goal: <span style="color:#c084fc">${a.current_goal}</span>
+            </div>
+            <div style="font-size:10px;color:#6b7280;margin-bottom:6px">
+                Lat: ${a.lat.toFixed(2)} | Lng: ${a.lng.toFixed(2)}
+            </div>
+
+            <div style="font-size:11px;margin-bottom:2px">Energy: ${a.energy.toFixed(1)}</div>
+            <div class="bar-container"><div class="bar energy" style="width:${a.energy}%"></div></div>
+
+            <div style="font-size:11px;margin-bottom:2px">Health: ${a.health.toFixed(1)}</div>
+            <div class="bar-container"><div class="bar health" style="width:${a.health}%"></div></div>
+
+            <div style="font-size:11px;margin-bottom:2px">Happiness: ${a.happiness.toFixed(1)}</div>
+            <div class="bar-container"><div class="bar happiness" style="width:${a.happiness}%"></div></div>
+
+            <div style="font-size:11px;margin:6px 0 2px;color:#6b7280">
+                Wealth: <span style="color:#fbbf24;font-weight:600">${a.wealth.toFixed(1)}</span> |
+                Children: ${a.children} |
+                Relationships: ${a.relationships_count}
+                ${a.business_id ? ' | <span style="color:#f97316">Business Owner</span>' : ''}
+            </div>
+        </div>
+
+        <div class="agent-card">
+            <div style="font-size:12px;font-weight:600;color:#c084fc;margin-bottom:4px">Personality Traits</div>
+            <div class="trait-grid">${traits}</div>
+        </div>
+
+        <div class="agent-card">
+            <div style="font-size:12px;font-weight:600;color:#3b82f6;margin-bottom:4px">Top Skills</div>
+            <div class="skill-list">${skills}</div>
+        </div>
+
+        <div class="agent-card">
+            <div style="font-size:12px;font-weight:600;color:#06b6d4;margin-bottom:4px">JEPA World Model</div>
+            <div style="font-size:11px;color:#9ca3af">
+                Train Steps: ${wm.train_steps || 0} |
+                Buffer: ${wm.buffer_size || 0} |
+                Maturity: ${((wm.model_maturity || 0) * 100).toFixed(0)}%
+            </div>
+        </div>
+
+        <div class="agent-card">
+            <div style="font-size:12px;font-weight:600;color:#22c55e;margin-bottom:4px">Memory</div>
+            <div style="font-size:11px;color:#9ca3af">
+                Episodes: ${mem.episodes || 0} |
+                Facts: ${mem.facts_known || 0} |
+                Strategies: ${mem.strategies || 0} |
+                Experiments: ${mem.experiments || 0}
+            </div>
+        </div>
+
+        <div style="text-align:center;margin-top:8px">
+            <button class="btn" onclick="map.flyTo([${a.lat}, ${a.lng}], 8)" style="font-size:11px;padding:4px 10px">Fly To Agent</button>
+        </div>
+    `;
+}
+
+function renderEventLog() {
+    const log = document.getElementById('event-log');
+    log.innerHTML = eventBuffer.slice(0, 80).map(e => {
+        if (e.event === 'death') {
+            return `<div class="event-item"><span style="color:#ef4444">&#9760;</span> <span class="event-agent">${e.agent_name}</span> died (${e.cause}, age ${e.age}, gen ${e.generation})</div>`;
+        }
+        const desc = e.outcome?.description || e.action || '';
+        return `<div class="event-item"><span class="event-agent">${e.agent_name}</span> <span class="event-action">${e.action}</span> ${desc ? '- ' + desc : ''}</div>`;
+    }).join('');
+}
+
+function updateSettlementList() {
+    if (!state || !state.settlements) return;
+    const div = document.getElementById('settlement-list');
+    if (!div) return;
+    try {
+        if (state.settlements.length === 0) {
+            div.innerHTML = '<p style="color:#6b7280;font-size:12px">No settlements yet.</p>';
+            return;
+        }
+        div.innerHTML = state.settlements.map(s => {
+            const treasury = (s.treasury != null) ? s.treasury.toFixed(0) : '0';
+            const coop = (s.culture && s.culture.cooperation != null) ? (s.culture.cooperation*100).toFixed(0) : '?';
+            const innov = (s.culture && s.culture.innovation != null) ? (s.culture.innovation*100).toFixed(0) : '?';
+            return `<div class="settlement-item" onclick="map.flyTo([${s.lat||0}, ${s.lng||0}], 8)" style="cursor:pointer">
+                <span class="settlement-name">${s.name||'?'}</span>
+                <div class="settlement-meta">Pop: ${s.population||0} | ${s.governance||'?'} | Treasury: ${treasury}</div>
+                <div class="settlement-meta">Culture: Coop ${coop}% | Innov ${innov}%</div>
+            </div>`;
+        }).join('');
+    } catch(e) { console.error('updateSettlementList:', e); }
+}
+
+// ============================================================================
+// Charts
+// ============================================================================
+function renderCharts() {
+    drawLineChart('chart-pop', chartData.pop, '#4ade80', 'Population');
+    drawLineChart('chart-econ', chartData.wealth, '#fbbf24', 'Avg Wealth');
+    drawLineChart('chart-happy', chartData.happiness, '#ec4899', 'Avg Happiness');
+}
+
+function drawLineChart(canvasId, data, color, label) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || data.length < 2) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.parentElement.clientWidth;
+    const h = 100;
+    canvas.width = w; canvas.height = h;
+
+    ctx.clearRect(0, 0, w, h);
+    const max = Math.max(...data, 1);
+    const min = Math.min(...data, 0);
+    const range = max - min || 1;
+
+    ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 1;
+    for (let i = 0; i < 4; i++) {
+        const y = h * i / 3;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < data.length; i++) {
+        const x = (i / (data.length - 1)) * w;
+        const y = h - ((data[i] - min) / range) * (h - 10) - 5;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    ctx.fillStyle = '#6b7280'; ctx.font = '10px sans-serif';
+    ctx.fillText(`${label}: ${data[data.length-1]?.toFixed?.(1) || 0}`, 4, 12);
+    ctx.fillText(`Max: ${max.toFixed(1)}`, w - 60, 12);
+}
+
+setInterval(() => {
+    if (document.getElementById('tab-charts').classList.contains('active')) renderCharts();
+    if (document.getElementById('tab-macro').classList.contains('active')) renderMacroCharts();
+}, 2000);
+
+// ============================================================================
+// Macro Dashboard
+// ============================================================================
+function updateMacroDashboard(macro) {
+    if (!macro) return;
+    const div = document.getElementById('macro-dashboard');
+    const tensionColor = macro.social_tension > 0.5 ? '#ef4444' : macro.social_tension > 0.3 ? '#fbbf24' : '#4ade80';
+    const tempColor = macro.temperature > 2.0 ? '#ef4444' : macro.temperature > 1.5 ? '#fbbf24' : '#4ade80';
+
+    div.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div class="agent-card">
+                <div style="font-size:10px;color:#6b7280">Year</div>
+                <div style="font-size:18px;font-weight:700;color:#fbbf24">${macro.year?.toFixed(0) || '2025'}</div>
+            </div>
+            <div class="agent-card">
+                <div style="font-size:10px;color:#6b7280">Population</div>
+                <div style="font-size:18px;font-weight:700;color:#4ade80">${macro.population_B?.toFixed(2) || '8.1'}B</div>
+            </div>
+        </div>
+        <div class="agent-card" style="margin-top:6px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                <span style="color:#9ca3af;font-size:11px">CO2</span>
+                <span style="color:#f97316;font-weight:600">${macro.co2_ppm?.toFixed(0) || 425} ppm</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                <span style="color:#9ca3af;font-size:11px">Temperature</span>
+                <span style="color:${tempColor};font-weight:600">+${macro.temperature?.toFixed(2) || '1.3'}°C</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                <span style="color:#9ca3af;font-size:11px">Sea Level Rise</span>
+                <span style="color:#60a5fa;font-weight:600">${((macro.sea_level_m || 0.21) * 100).toFixed(0)} cm</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                <span style="color:#9ca3af;font-size:11px">Fossil Fuels</span>
+                <span style="font-weight:600">${((macro.fossil_fuels || 0.85) * 100).toFixed(0)}%</span>
+            </div>
+            <div class="bar-container"><div class="bar" style="width:${(macro.fossil_fuels||0.85)*100}%;background:#f97316"></div></div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px;margin-top:4px">
+                <span style="color:#9ca3af;font-size:11px">Renewables</span>
+                <span style="color:#22c55e;font-weight:600">${((macro.renewable_frac || 0.15) * 100).toFixed(0)}%</span>
+            </div>
+            <div class="bar-container"><div class="bar" style="width:${(macro.renewable_frac||0.15)*100}%;background:#22c55e"></div></div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px;margin-top:4px">
+                <span style="color:#9ca3af;font-size:11px">Social Tension</span>
+                <span style="color:${tensionColor};font-weight:600">${((macro.social_tension || 0.25) * 100).toFixed(0)}%</span>
+            </div>
+            <div class="bar-container"><div class="bar" style="width:${(macro.social_tension||0.25)*100}%;background:${tensionColor}"></div></div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px;margin-top:4px">
+                <span style="color:#9ca3af;font-size:11px">Food Production</span>
+                <span style="font-weight:600">${((macro.food_index || 1.0) * 100).toFixed(0)}%</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:4px">
+                <span style="color:#9ca3af;font-size:11px">Human Welfare</span>
+                <span style="font-weight:600">${((macro.welfare || 0.65) * 100).toFixed(0)}%</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:4px">
+                <span style="color:#9ca3af;font-size:11px">Technology</span>
+                <span style="color:#06b6d4;font-weight:600">${macro.technology?.toFixed(2) || '1.0'}x</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:4px">
+                <span style="color:#9ca3af;font-size:11px">Pollution</span>
+                <span style="font-weight:600">${((macro.pollution || 0.3) * 100).toFixed(0)}%</span>
+            </div>
+        </div>
+    `;
+}
+
+function renderMacroCharts() {
+    drawLineChart('chart-co2', chartData.co2, '#f97316', 'CO2 (ppm)');
+    drawLineChart('chart-tension', chartData.tension, '#ef4444', 'Social Tension');
+}
+
+// ============================================================================
+// Nations & Conflicts
+// ============================================================================
+function updateNationsList(nations, conflicts) {
+    if (!nations) return;
+
+    // Geopolitics summary
+    const summaryDiv = document.getElementById('geopolitics-summary');
+    if (state && state.geopolitics) {
+        const g = state.geopolitics;
+        summaryDiv.innerHTML = `
+            <div style="display:flex;gap:12px;flex-wrap:wrap">
+                <span style="color:#4ade80">${g.nations} nations</span>
+                <span style="color:${g.active_conflicts > 0 ? '#ef4444' : '#6b7280'}">${g.active_conflicts} conflicts</span>
+                <span style="color:#60a5fa">Trade: ${g.trade_volume?.toFixed(1) || 0}</span>
+                <span style="color:#9ca3af">Trust: ${((g.avg_trust || 0) * 100).toFixed(0)}%</span>
+            </div>
+        `;
+    }
+
+    // Nations list
+    const nationsDiv = document.getElementById('nations-list');
+    if (!nationsDiv) return;
+    try {
+        if (!nations || nations.length === 0) {
+            nationsDiv.innerHTML = '<div style="color:#6b7280;font-size:12px">Nations emerge when settlements grow large enough.</div>';
+        } else {
+            nationsDiv.innerHTML = nations.map(n => {
+                const lat = n.lat || 0, lng = n.lng || 0;
+                const wealth = (n.wealth != null) ? n.wealth.toFixed(0) : '?';
+                const tech = (n.tech != null) ? n.tech.toFixed(2) : '?';
+                const trade = (n.trade_openness != null) ? (n.trade_openness * 100).toFixed(0) : '?';
+                const pledge = (n.climate_pledge != null) ? (n.climate_pledge * 100).toFixed(0) : '?';
+                const allies = (n.alliances && n.alliances.length) || 0;
+                const rivals = (n.rivals && n.rivals.length) || 0;
+                return `<div class="settlement-item" onclick="map.flyTo([${lat}, ${lng}], 6)" style="cursor:pointer">
+                    <span class="settlement-name" style="color:#4ade80">${n.name || 'Unknown'}</span>
+                    <div class="settlement-meta">Pop: ${n.population || 0} | Wealth: ${wealth} | Tech: ${tech}</div>
+                    <div class="settlement-meta">
+                        Policy: ${(n.carbon_policy || 0) > 0 ? '<span style="color:#22c55e">Green</span>' : '<span style="color:#f97316">Fossil</span>'} |
+                        Trade: ${trade}% | Pledge: ${pledge}%
+                    </div>
+                    ${allies > 0 ? `<div class="settlement-meta" style="color:#60a5fa">Allies: ${allies}</div>` : ''}
+                    ${rivals > 0 ? `<div class="settlement-meta" style="color:#ef4444">Rivals: ${rivals}</div>` : ''}
+                </div>`;
+            }).join('');
+        }
+    } catch(e) { console.error('Nations render error:', e); }
+
+    // Conflicts list
+    const conflictsDiv = document.getElementById('conflicts-list');
+    if (!conflictsDiv) return;
+    try {
+        if (!conflicts || conflicts.length === 0) {
+            conflictsDiv.innerHTML = '<div style="color:#6b7280;font-size:12px">No active conflicts.</div>';
+        } else {
+            conflictsDiv.innerHTML = conflicts.map(c => {
+                const lat = c.lat || 0, lng = c.lng || 0;
+                const intensity = (c.intensity != null) ? (c.intensity * 100).toFixed(0) : '?';
+                const names = (c.nation_names && c.nation_names.join) ? c.nation_names.join(' vs ') : (c.cause || 'Conflict');
+                return `<div class="settlement-item" onclick="map.flyTo([${lat}, ${lng}], 6)" style="cursor:pointer;border-left:3px solid #ef4444">
+                    <div style="color:#ef4444;font-weight:600;font-size:12px">${names}</div>
+                    <div class="settlement-meta">Intensity: ${intensity}% | Duration: ${c.duration || 0} | Cause: ${c.cause || '?'}</div>
+                </div>`;
+            }).join('');
+        }
+    } catch(e) { console.error('Conflicts render error:', e); }
+}
+
+// Conflict zones on map
+const conflictLayer = L.layerGroup().addTo(map);
+
+// ============================================================================
+// LLM Controls
+// ============================================================================
+// EU AI Act compliant providers only
+const PROVIDER_PRESETS = {
+    ollama: { base_url: 'http://localhost:11434', model: 'qwen3:8b' },
+    mistral: { base_url: 'https://api.mistral.ai', model: 'mistral-small-latest' },
+};
+
+function onProviderChange() {
+    const provider = document.getElementById('llm-provider').value;
+    const preset = PROVIDER_PRESETS[provider] || {};
+    if (preset.base_url) document.getElementById('llm-url').value = preset.base_url;
+    if (preset.model) document.getElementById('llm-model').value = preset.model;
+    updateLLMConfig();
+}
+
+function toggleLLM(enabled) {
+    socket.emit('set_llm_config', {
+        enabled: enabled,
+        provider: document.getElementById('llm-provider').value,
+        model: document.getElementById('llm-model').value,
+        base_url: document.getElementById('llm-url').value,
+        api_key: document.getElementById('llm-api-key').value,
+    });
+}
+
+function updateLLMConfig() {
+    if (document.getElementById('llm-toggle').checked) {
+        toggleLLM(true);
+    }
+}
+
+function testLLM() {
+    document.getElementById('llm-test-result').textContent = 'Testing...';
+    socket.emit('test_llm');
+}
+
+socket.on('llm_test_result', (data) => {
+    const el = document.getElementById('llm-test-result');
+    if (data.success) {
+        el.innerHTML = `<span style="color:#4ade80">Connected!</span> Latency: ${data.latency_ms}ms`;
+        if (data.models) el.innerHTML += `<br>Models: ${data.models.join(', ')}`;
+    } else {
+        el.innerHTML = `<span style="color:#ef4444">Failed:</span> ${data.error?.substring(0, 80)}`;
+    }
+});
+
+socket.on('llm_status', (data) => {
+    const indicator = document.getElementById('llm-indicator');
+    const text = document.getElementById('llm-status-text');
+    indicator.style.background = data.enabled ? '#4ade80' : '#ef4444';
+    text.textContent = data.enabled ? `${data.model} (${data.total_calls} calls)` : 'Disabled';
+});
+
+function updateLLMStats(stats) {
+    if (!stats || !stats.llm) return;
+    const llm = stats.llm;
+    const el = document.getElementById('llm-stats');
+    if (el) {
+        el.innerHTML = `Calls: ${llm.total_calls} | This tick: ${llm.calls_this_tick}/${llm.max_calls_per_tick || 5} | Latency: ${llm.avg_latency_ms}ms | Errors: ${llm.errors}`;
+    }
+    const indicator = document.getElementById('llm-indicator');
+    if (indicator) indicator.style.background = llm.enabled ? '#4ade80' : '#ef4444';
+}
+
+function updateDialogueFeed() {
+    if (!state || !state.dialogues) return;
+    const feed = document.getElementById('dialogue-feed');
+    if (!feed) return;
+    feed.innerHTML = state.dialogues.slice(-15).reverse().map(d =>
+        `<div style="padding:3px 0;border-bottom:1px solid #1e293b">
+            <span style="color:#f0abfc">${d.agent_name}</span>
+            <span style="color:#6b7280;font-size:10px">(${d.action})</span>
+            <div style="color:#d1d5db;font-size:10px;margin-top:1px">${d.text || ''}</div>
+        </div>`
+    ).join('');
+}
+
+// ============================================================================
+// God Mode Controls
+// ============================================================================
+let godClickLat = 0, godClickLng = 0;
+
+map.on('click', (e) => {
+    godClickLat = e.latlng.lat;
+    godClickLng = e.latlng.lng;
+});
+
+function toggleGodMode(enabled) {
+    socket.emit('set_god_mode', { enabled: enabled });
+}
+
+function godWhisper() {
+    if (!selectedAgent) { alert('Click an agent on the map first!'); return; }
+    const msg = document.getElementById('god-whisper-msg').value;
+    if (msg) {
+        socket.emit('god_whisper', { agent_id: selectedAgent.id, message: msg });
+        document.getElementById('god-whisper-msg').value = '';
+    }
+}
+
+function godCommandment() {
+    const msg = document.getElementById('god-cmd-msg').value;
+    const radius = parseFloat(document.getElementById('god-cmd-radius').value) || 10;
+    if (msg) {
+        socket.emit('god_commandment', { message: msg, lat: godClickLat, lng: godClickLng, radius: radius });
+        document.getElementById('god-cmd-msg').value = '';
+    }
+}
+
+function godEvent(type) {
+    const params = { type: type, lat: godClickLat, lng: godClickLng };
+    if (type === 'drought') { params.radius = 5; params.severity = 0.6; params.duration = 50; }
+    else if (type === 'plague') { params.radius = 3; params.severity = 0.4; params.duration = 30; }
+    else if (type === 'discovery') { params.resource = 'food'; params.amount = 80; }
+    else if (type === 'tech') { params.skill = 'research'; params.boost = 0.3; }
+    else if (type === 'climate') { params.temp_delta = 1.0; params.co2_delta = 50; }
+    socket.emit('god_event', params);
+}
+
+// God whisper result (agent response with compliance info)
+socket.on('god_result', (data) => {
+    const logEl = document.getElementById('god-effects');
+    if (!logEl) return;
+
+    if (data.agent_response !== undefined) {
+        const name = data.agent_name || 'Agent';
+        const complied = data.complied;
+        const goalChanged = data.goal_changed;
+        const trust = data.divine_trust || '?';
+        const compColor = complied ? '#4ade80' : '#ef4444';
+        const compText = complied ? 'OBEYED' : 'REFUSED';
+
+        let effectLine = '';
+        if (goalChanged) {
+            effectLine = `<div style="font-size:10px;color:#06b6d4;margin-top:3px">Goal changed to: <b>${goalChanged}</b></div>`;
+        }
+
+        logEl.innerHTML = `<div style="padding:8px;background:#1e293b;border-radius:6px;margin-bottom:6px;border-left:3px solid ${compColor}">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:11px;color:#fbbf24;font-weight:600">Whisper → ${name}</span>
+                <span style="font-size:9px;color:${compColor};font-weight:600">${compText}</span>
+            </div>
+            <div style="font-size:12px;color:#e0e6ed;margin-top:4px;font-style:italic">"${data.agent_response}"</div>
+            ${effectLine}
+            <div style="font-size:9px;color:#6b7280;margin-top:3px">Divine trust: ${trust} | Compliance: ${complied ? 'yes' : 'no'}</div>
+        </div>` + logEl.innerHTML;
+    } else if (data.success) {
+        logEl.innerHTML = `<div style="padding:3px;color:#4ade80;font-size:11px">Whisper queued for ${data.agent_name || 'agent'}</div>` + logEl.innerHTML;
+    } else {
+        logEl.innerHTML = `<div style="padding:3px;color:#ef4444;font-size:11px">Error: ${data.error || 'unknown'}</div>` + logEl.innerHTML;
+    }
+});
+
+// God world event result (drought, plague, etc.)
+socket.on('god_event_result', (data) => {
+    const logEl = document.getElementById('god-effects');
+    if (!logEl) return;
+
+    const icons = { drought: '🏜️', plague: '☠️', discovery: '💎', tech: '🔬', climate: '🌡️', commandment: '📢' };
+    const colors = { drought: '#fbbf24', plague: '#ef4444', discovery: '#4ade80', tech: '#06b6d4', climate: '#f97316', commandment: '#c084fc' };
+    const type = data.event_type || 'unknown';
+    const icon = icons[type] || '⚡';
+    const color = colors[type] || '#9ca3af';
+
+    if (data.success) {
+        let detail = '';
+        if (type === 'commandment') {
+            const reached = data.agents_reached || 0;
+            const complied = data.complied || 0;
+            const refused = data.refused || 0;
+            const goals = data.goals_changed || {};
+            const goalStr = Object.entries(goals).map(([g,n]) => `${n}→${g}`).join(', ');
+            detail = `Broadcast to <b>${reached}</b> agents at (${(data.lat||0).toFixed(1)}, ${(data.lng||0).toFixed(1)})<br>` +
+                     `<span style="color:#4ade80">Obeyed: ${complied}</span> | <span style="color:#ef4444">Refused: ${refused}</span>` +
+                     (goalStr ? `<br>Goals changed: ${goalStr}` : '') +
+                     `<br><i>"${data.message || ''}"</i>`;
+        }
+        else if (type === 'drought') detail = `Drought at (${godClickLat.toFixed(1)}, ${godClickLng.toFixed(1)}) — food &amp; water reduced for 50 ticks`;
+        else if (type === 'plague') detail = `Plague at (${godClickLat.toFixed(1)}, ${godClickLng.toFixed(1)}) — health damage for 30 ticks`;
+        else if (type === 'discovery') detail = `Resource discovery at (${godClickLat.toFixed(1)}, ${godClickLng.toFixed(1)}) — food +80`;
+        else if (type === 'tech') detail = `Technology granted — research skill boosted`;
+        else if (type === 'climate') detail = `Climate nudge: +1°C temperature, +50 ppm CO2`;
+        else detail = `${type} event triggered`;
+
+        logEl.innerHTML = `<div style="padding:6px;background:#1e293b;border-radius:6px;margin-bottom:6px;border-left:3px solid ${color}">
+            <div style="font-size:11px;color:${color};font-weight:600">${icon} ${type.charAt(0).toUpperCase() + type.slice(1)}</div>
+            <div style="font-size:11px;color:#d1d5db;margin-top:2px">${detail}</div>
+        </div>` + logEl.innerHTML;
+    } else {
+        logEl.innerHTML = `<div style="padding:3px;color:#ef4444;font-size:11px">${icon} Failed: ${data.error || 'unknown'}</div>` + logEl.innerHTML;
+    }
+});
+
+function updateGodModeUI(stats) {
+    if (!stats || !stats.god_mode) return;
+    const gm = stats.god_mode;
+    const effectsEl = document.getElementById('god-effects');
+    if (effectsEl) {
+        if (gm.active_effects && gm.active_effects.length > 0) {
+            effectsEl.innerHTML = gm.active_effects.map(e =>
+                `<div style="padding:2px 0;border-bottom:1px solid #1e293b">
+                    <span style="color:${e.type === 'plague' ? '#ef4444' : '#fbbf24'}">${e.type}</span>
+                    at (${e.lat}, ${e.lng}) r=${e.radius}° sev=${e.severity} [${e.remaining}/${e.total} ticks]
+                </div>`
+            ).join('');
+        } else {
+            effectsEl.textContent = 'None';
+        }
+    }
+}
+
+// ============================================================================
+// Chat System
+// ============================================================================
+let chatMode = 'single'; // 'single' or 'group'
+let chatHistory = [];     // [{from: 'user'|'agent', name: str, text: str, tone: str}]
+
+function chatModeAgent() {
+    chatMode = 'single';
+    document.getElementById('chat-mode-single').style.background = '#1e3a5f';
+    document.getElementById('chat-mode-group').style.background = '#111827';
+    updateChatTitle();
+}
+
+function chatModeGroup() {
+    chatMode = 'group';
+    document.getElementById('chat-mode-group').style.background = '#1e3a5f';
+    document.getElementById('chat-mode-single').style.background = '#111827';
+    updateChatTitle();
+}
+
+function updateChatTitle() {
+    const title = document.getElementById('chat-title');
+    const info = document.getElementById('chat-target-info');
+    if (chatMode === 'single' && selectedAgent) {
+        title.textContent = 'Chat with ' + selectedAgent.name;
+        info.innerHTML = `<span style="color:#f0abfc">${selectedAgent.name}</span> (Gen ${selectedAgent.generation}) — ${selectedAgent.current_action}`;
+    } else if (chatMode === 'group' && selectedAgent) {
+        title.textContent = 'Group Chat (nearby ' + selectedAgent.name + ')';
+        info.innerHTML = 'Will message all agents near <span style="color:#f0abfc">' + selectedAgent.name + '</span>';
+    } else {
+        title.textContent = 'Chat';
+        info.textContent = 'Click an agent on the map to start chatting.';
+    }
+}
+
+// Update chat info when agent is selected
+const _origSwitchTabDirect = switchTabDirect;
+// Hook into agent selection to update chat and god whisper target
+socket.on('agent_detail', (data) => {
+    if (data) {
+        selectedAgent = data;
+        renderAgentDetail(data);
+        updateChatTitle();
+        // Update god whisper target display
+        const wt = document.getElementById('god-whisper-target');
+        if (wt) wt.innerHTML = '<span style="color:#f0abfc">' + data.name + '</span> (ID: ' + data.id + ')';
+    }
+});
+
+function sendChat() {
+    const input = document.getElementById('chat-input');
+    const msg = input.value.trim();
+    if (!msg) return;
+    if (!selectedAgent) { alert('Click an agent on the map first!'); return; }
+
+    const context = document.getElementById('chat-context').value;
+
+    // Add user message to chat
+    addChatMessage('user', 'You', msg);
+    input.value = '';
+
+    if (chatMode === 'single') {
+        socket.emit('chat_with_agent', {
+            agent_id: selectedAgent.id,
+            message: msg,
+            context: context,
+        });
+    } else {
+        // Group: find nearby agents
+        const nearbyIds = [];
+        if (state && state.agents) {
+            for (const a of state.agents) {
+                if (!a.alive) continue;
+                const d = Math.sqrt((a.lat - selectedAgent.lat)**2 + (a.lng - selectedAgent.lng)**2);
+                if (d < 5.0 && nearbyIds.length < 8) nearbyIds.push(a.id);
+            }
+        }
+        if (nearbyIds.length === 0) nearbyIds.push(selectedAgent.id);
+        socket.emit('chat_with_group', {
+            agent_ids: nearbyIds,
+            message: msg,
+            context: context,
+        });
+    }
+}
+
+socket.on('chat_response', (data) => {
+    if (data.error && !data.text) {
+        addChatMessage('system', 'System', data.error, 'error');
+        return;
+    }
+    const llmTag = data.llm_used ? 'LLM' : 'Traits';
+    addChatMessage('agent', data.agent_name, data.text, data.tone, llmTag);
+    if (data.error) {
+        addChatMessage('system', 'System', 'LLM error: ' + data.error + ' (fell back to Traits)', 'info');
+    }
+    if (data.goal_change) {
+        addChatMessage('system', 'System',
+            data.agent_name + ' changed goal to: ' + data.goal_change, 'info');
+    }
+});
+
+socket.on('group_chat_response', (data) => {
+    if (data.error && !data.responses) {
+        addChatMessage('system', 'System', data.error, 'error');
+        return;
+    }
+    for (const resp of (data.responses || [])) {
+        const tag = resp.llm_used ? 'LLM' : 'Traits';
+        addChatMessage('agent', resp.agent_name, resp.text, resp.tone, tag);
+    }
+});
+
+function addChatMessage(from, name, text, tone, tag) {
+    chatHistory.push({from, name, text, tone, tag: tag || ''});
+    if (chatHistory.length > 50) chatHistory.shift();
+    renderChatMessages();
+}
+
+function renderChatMessages() {
+    const container = document.getElementById('chat-messages');
+    if (!container) return;
+
+    const toneColors = {
+        friendly: '#4ade80', hostile: '#ef4444', curious: '#60a5fa',
+        fearful: '#fbbf24', neutral: '#9ca3af', error: '#ef4444', info: '#06b6d4',
+    };
+
+    container.innerHTML = chatHistory.map(m => {
+        const isUser = m.from === 'user';
+        const isSystem = m.from === 'system';
+        const color = isUser ? '#93c5fd' : isSystem ? '#6b7280' : (toneColors[m.tone] || '#f0abfc');
+        const align = isUser ? 'flex-end' : 'flex-start';
+        const bg = isUser ? '#1e3a5f' : isSystem ? '#1e293b' : '#1e293b';
+        const border = isUser ? 'border-left:3px solid #3b82f6' : isSystem ? '' : 'border-left:3px solid ' + color;
+
+        // LLM vs Traits badge
+        let badge = '';
+        if (m.tag === 'LLM') badge = '<span style="background:#06b6d4;color:#fff;font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px">LLM</span>';
+        else if (m.tag === 'Traits') badge = '<span style="background:#7c3aed;color:#fff;font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px">Traits</span>';
+
+        return `<div style="display:flex;justify-content:${align};margin-bottom:6px">
+            <div style="max-width:85%;background:${bg};border-radius:8px;padding:6px 10px;${border}">
+                <div style="font-size:10px;color:${color};font-weight:600;margin-bottom:2px">${m.name}${m.tone && !isUser && !isSystem ? ' <span style="color:#6b7280;font-weight:400">(' + m.tone + ')</span>' : ''}${badge}</div>
+                <div style="font-size:12px;color:#e0e6ed">${m.text}</div>
+            </div>
+        </div>`;
+    }).join('');
+    container.scrollTop = container.scrollHeight;
+}
+
+// ============================================================================
+// Panel Resize
+// ============================================================================
+(function() {
+    const handle = document.getElementById('panel-resize-handle');
+    const panel = document.getElementById('panel');
+    let isDragging = false;
+    let startX, startWidth;
+
+    handle.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        startX = e.clientX;
+        startWidth = panel.offsetWidth;
+        handle.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const delta = startX - e.clientX;
+        const newWidth = Math.max(200, Math.min(700, startWidth + delta));
+        panel.style.width = newWidth + 'px';
+        // Trigger map resize
+        if (typeof map !== 'undefined') map.invalidateSize();
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            handle.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            if (typeof map !== 'undefined') map.invalidateSize();
+        }
+    });
+})();
+
+// ============================================================================
+// Logger
+// ============================================================================
+function updateLoggerUI(state) {
+    if (!state || !state.logger) return;
+    const lg = state.logger;
+    const el = document.getElementById('log-run-id');
+    if (el) el.textContent = lg.run_id || '—';
+    const rows = document.getElementById('log-rows');
+    if (rows) rows.textContent = lg.rows_written || 0;
+    const interval = document.getElementById('log-interval');
+    if (interval) interval.textContent = lg.log_interval || 1;
+
+    // Compute live metrics from state data
+    if (state.agents && state.agents.length > 0) {
+        const wealths = state.agents.map(a => a.wealth).sort((a, b) => a - b);
+        const n = wealths.length;
+        const median = wealths[Math.floor(n / 2)];
+        document.getElementById('log-median-wealth').textContent = median.toFixed(1);
+
+        // Gini coefficient
+        let sumDiff = 0, sumTotal = 0;
+        for (let i = 0; i < n; i++) {
+            sumTotal += wealths[i];
+            for (let j = 0; j < n; j++) sumDiff += Math.abs(wealths[i] - wealths[j]);
+        }
+        const gini = sumTotal > 0 ? sumDiff / (2 * n * sumTotal) : 0;
+        const giniEl = document.getElementById('log-gini');
+        giniEl.textContent = gini.toFixed(3);
+        giniEl.style.color = gini > 0.5 ? '#ef4444' : gini > 0.3 ? '#fbbf24' : '#4ade80';
+
+        // Spread
+        const lats = state.agents.map(a => a.lat);
+        const lngs = state.agents.map(a => a.lng);
+        const stdLat = Math.sqrt(lats.reduce((s, v) => s + (v - lats.reduce((a,b)=>a+b,0)/n)**2, 0) / n);
+        const stdLng = Math.sqrt(lngs.reduce((s, v) => s + (v - lngs.reduce((a,b)=>a+b,0)/n)**2, 0) / n);
+        document.getElementById('log-spread').textContent = Math.sqrt(stdLat**2 + stdLng**2).toFixed(1) + '°';
+    }
+}
+
+function fetchLoggerRuns() {
+    fetch('/api/logger/runs').then(r => r.json()).then(runs => {
+        const el = document.getElementById('logger-runs');
+        if (runs.length === 0) {
+            el.innerHTML = '<div style="color:#6b7280">No previous runs found.</div>';
+            return;
+        }
+        el.innerHTML = runs.map(r =>
+            `<div style="padding:4px 0;border-bottom:1px solid #1e293b">
+                <span style="color:#60a5fa">${r.run_id}</span>
+                <span style="color:#6b7280;font-size:10px">${r.scenario_name || ''}</span>
+                <div style="font-size:10px;color:#9ca3af">
+                    ${r.total_rows || '?'} rows | Seed: ${r.seed || '?'} |
+                    <a href="/api/logger/download/${r.run_id}" style="color:#4ade80" target="_blank">Download</a>
+                </div>
+            </div>`
+        ).join('');
+    });
+}
+
+function updateConflictOverlay(conflicts) {
+    conflictLayer.clearLayers();
+    if (!conflicts) return;
+
+    conflicts.forEach(c => {
+        // Red pulsing circle for conflict zone
+        L.circle([c.lat, c.lng], {
+            radius: c.radius * 111000,  // degrees to meters
+            color: '#ef4444',
+            fillColor: '#ef4444',
+            fillOpacity: 0.1 + 0.15 * c.intensity,
+            weight: 2,
+            dashArray: '5,10',
+        }).bindTooltip(
+            `<strong style="color:#ef4444">Conflict Zone</strong><br>` +
+            `${c.nation_names?.join(' vs ') || ''}<br>` +
+            `Intensity: ${(c.intensity * 100).toFixed(0)}%`,
+            { className: 'agent-tooltip' }
+        ).addTo(conflictLayer);
+    });
+}
+
+</script>
+</body>
+</html>

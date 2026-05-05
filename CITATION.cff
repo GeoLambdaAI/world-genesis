@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software in research, please cite it as below."
+type: software
+title: "World Genesis: Autonomous Agent Civilization Simulator"
+abstract: >-
+  A physics-based, AI-driven simulation of human civilization on Planet Earth,
+  integrating JEPA world models for agent cognition (LeCun 2022; Maes et al. 2026),
+  a 14-state macro ODE for system dynamics (Club of Rome / DICE / Earth4All),
+  emergent geopolitics (International Futures), and 70,000 years of paleoclimate
+  data on real Earth geography.
+authors:
+  - family-names: Tombrink
+    given-names: Gerrit
+    name-suffix: Dr.
+    affiliation: GeoLambda GmbH
+version: 0.1.0
+date-released: "2026-05-03"
+license: AGPL-3.0-or-later
+repository-code: "https://github.com/GeoLambdaAI/world-genesis"
+url: "https://www.geolambda.ai"
+keywords:
+  - agent-based-modeling
+  - climate-simulation
+  - JEPA
+  - world-model
+  - macroeconomics
+  - geopolitics
+  - paleoclimate
+  - earth-system
+  - reproducible-research

@@ -1,0 +1,97 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "world-genesis"
+version = "0.1.0"
+description = "A physics-based, AI-driven simulation of human civilization on Planet Earth — JEPA agents, macro ODE, emergent geopolitics, real Earth geography."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-or-later"
+authors = [
+    { name = "Dr. Gerrit Tombrink" },
+]
+maintainers = [
+    { name = "GeoLambda GmbH" },
+]
+keywords = [
+    "agent-based-modeling",
+    "climate",
+    "simulation",
+    "JEPA",
+    "world-model",
+    "AI",
+    "geopolitics",
+    "macroeconomics",
+    "paleoclimate",
+    "earth-system",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "flask>=3.0.0",
+    "flask-socketio>=5.3.0",
+    "eventlet>=0.35.0",
+    "scipy>=1.12.0",
+    "networkx>=3.2",
+    "shapely>=2.0.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+    "mypy>=1.8",
+]
+viz = [
+    "matplotlib>=3.8",
+    "pandas>=2.2",
+]
+
+[project.urls]
+Homepage = "https://www.geolambda.ai"
+Repository = "https://github.com/GeoLambdaAI/world-genesis"
+Issues = "https://github.com/GeoLambdaAI/world-genesis/issues"
+Changelog = "https://github.com/GeoLambdaAI/world-genesis/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+py-modules = [
+    "agent_state",
+    "agents",
+    "app",
+    "bridge",
+    "earth",
+    "generate_earth_data",
+    "generate_landmask",
+    "generate_present_day_data",
+    "geopolitics",
+    "god_mode",
+    "history",
+    "llm_module",
+    "macro",
+    "scenarios",
+    "shared_world_model",
+    "sim_logger",
+    "world",
+    "world_model",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
