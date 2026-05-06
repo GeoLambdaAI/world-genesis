@@ -734,6 +734,24 @@ socket.on('tick', (stats) => {
         chartData.pop.shift(); chartData.wealth.shift(); chartData.happiness.shift();
         chartData.co2.shift(); chartData.tension.shift();
     }
+    // Update the right-sidebar Global State / Nations panels every tick.
+    // Previously these only updated via the 'full_state' event which fires
+    // every 10 ticks (app.py simulation_loop), so panels lagged behind the
+    // simulation and could show stale values across server restarts.
+    // stats.macro and stats.geopolitics already carry the era-aware payload
+    // (see World._build_era_aware_summaries), so this is safe to call here.
+    if (stats.macro) {
+        try { updateMacroDashboard(stats.macro); } catch(e) { console.error('updateMacroDashboard:', e); }
+    }
+    if (stats.geopolitics) {
+        // Refresh just the geopolitics summary (settlement/nation/conflict
+        // counts). The full nations list is heavier and continues to come
+        // from the 10-tick 'full_state' emit.
+        try {
+            if (state) state.geopolitics = stats.geopolitics;
+            updateNationsList(state && state.nations, state && state.conflicts);
+        } catch(e) { console.error('updateNationsList:', e); }
+    }
 });
 
 socket.on('agent_detail', (data) => {
@@ -1105,11 +1123,19 @@ function drawLineChart(canvasId, data, color, label) {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     }
 
+    // Padding around the data line. Top padding leaves room for the
+    // label / Max readouts drawn at y=12 with a 10px font (glyphs occupy
+    // y ~= 2..14); a 5px top padding (the previous value) caused the line
+    // to cross the labels at peak values. 20px keeps the line clear.
+    const padTop = 20;
+    const padBottom = 5;
+    const plotH = h - padTop - padBottom;
+
     ctx.strokeStyle = color; ctx.lineWidth = 1.5;
     ctx.beginPath();
     for (let i = 0; i < data.length; i++) {
         const x = (i / (data.length - 1)) * w;
-        const y = h - ((data[i] - min) / range) * (h - 10) - 5;
+        const y = h - ((data[i] - min) / range) * plotH - padBottom;
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.stroke();
@@ -1127,6 +1153,27 @@ setInterval(() => {
 // ============================================================================
 // Macro Dashboard
 // ============================================================================
+
+// Format a signed number with leading sign (no double-sign on negatives).
+// fmtSigned(-5.13, 2) -> "-5.13"   fmtSigned(1.27, 2) -> "+1.27"
+// fmtSigned(0, 2)     -> "+0.00"
+function fmtSigned(v, dp) {
+    if (v === null || v === undefined || Number.isNaN(v)) return '';
+    return (v >= 0 ? '+' : '') + Number(v).toFixed(dp);
+}
+
+// Format sea-level displacement adaptively: large magnitudes (paleo, e.g.
+// LGM -101 m relative to present) use meters; small magnitudes (modern,
+// e.g. +0.21 m) use cm. Source for paleo magnitudes: Vostok / EPICA ice
+// cores (Petit et al. 1999; Lüthi et al. 2008) interpolated by
+// PaleoclimateModel; Clark et al. (2009) for LGM ice extent.
+function fmtSeaLevel(m) {
+    if (m === null || m === undefined || Number.isNaN(m)) m = 0.21;
+    return Math.abs(m) >= 1
+        ? fmtSigned(m, 1) + ' m'
+        : fmtSigned(m * 100, 0) + ' cm';
+}
+
 function updateMacroDashboard(macro) {
     if (!macro) return;
     const div = document.getElementById('macro-dashboard');
@@ -1151,11 +1198,11 @@ function updateMacroDashboard(macro) {
             </div>
             <div style="display:flex;justify-content:space-between;margin-bottom:4px">
                 <span style="color:#9ca3af;font-size:11px">Temperature</span>
-                <span style="color:${tempColor};font-weight:600">+${macro.temperature?.toFixed(2) || '1.3'}°C</span>
+                <span style="color:${tempColor};font-weight:600">${fmtSigned(macro.temperature ?? 1.3, 2)}°C</span>
             </div>
             <div style="display:flex;justify-content:space-between;margin-bottom:4px">
                 <span style="color:#9ca3af;font-size:11px">Sea Level Rise</span>
-                <span style="color:#60a5fa;font-weight:600">${((macro.sea_level_m || 0.21) * 100).toFixed(0)} cm</span>
+                <span style="color:#60a5fa;font-weight:600">${fmtSeaLevel(macro.sea_level_m ?? 0.21)}</span>
             </div>
             <div style="display:flex;justify-content:space-between;margin-bottom:4px">
                 <span style="color:#9ca3af;font-size:11px">Fossil Fuels</span>
@@ -1203,13 +1250,19 @@ function renderMacroCharts() {
 function updateNationsList(nations, conflicts) {
     if (!nations) return;
 
-    // Geopolitics summary
+    // Geopolitics summary. Nations form only when settlements grow large
+    // (see GeopoliticalSystem.NATION_FORMATION_POP), so in paleo era the
+    // nations/conflicts/trade fields are zero by design. Settlement count
+    // is included separately so this panel still reflects the pre-nation
+    // tribal/clustered activity that DOES evolve over the 70,000-yr view.
     const summaryDiv = document.getElementById('geopolitics-summary');
     if (state && state.geopolitics) {
         const g = state.geopolitics;
+        const settlements = g.settlements ?? state.settlements ?? 0;
         summaryDiv.innerHTML = `
             <div style="display:flex;gap:12px;flex-wrap:wrap">
                 <span style="color:#4ade80">${g.nations} nations</span>
+                <span style="color:#a78bfa">${settlements} settlements</span>
                 <span style="color:${g.active_conflicts > 0 ? '#ef4444' : '#6b7280'}">${g.active_conflicts} conflicts</span>
                 <span style="color:#60a5fa">Trade: ${g.trade_volume?.toFixed(1) || 0}</span>
                 <span style="color:#9ca3af">Trust: ${((g.avg_trust || 0) * 100).toFixed(0)}%</span>

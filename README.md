@@ -20,7 +20,17 @@ wage wars, and evolve — all emergently, on real Earth geography with real clim
 [![Tests](https://github.com/GeoLambdaAI/world-genesis/actions/workflows/test.yml/badge.svg)](https://github.com/GeoLambdaAI/world-genesis/actions/workflows/test.yml)
 [![DOI](https://img.shields.io/badge/DOI-pending-lightgrey.svg)](https://www.geolambda.ai)
 
-> **Status:** v0.1.0 — initial public release.
+> **Status:** v0.2.1 — calibration release. v0.2.0 fixed six categories
+> of bugs in the v0.1.0 JEPA training, climate physics, conflict modelling,
+> agent lifecycle scaling, and macro/agent coupling. v0.2.1 is a same-day
+> follow-up that resolved five additional coupling/timing bugs in the
+> integration glue (regen-array ratchets, tech-diffusion double-credit,
+> stale trade edges, paleo ice-retreat recovery, macro `dt_years` 10× rate
+> mismatch) plus several UI-payload corrections that caused the right-sidebar
+> dashboard to misrepresent paleo-era state. See [CHANGELOG.md](CHANGELOG.md)
+> for details. The `Built primarily with Claude Code` framing in the header
+> applies to the v0.1.0 generation; the v0.2.0 / v0.2.1 calibration passes
+> were separate human-led reviews with LLM assistance.
 
 <p align="center">
   <a href="static/world-genesis.jpg">
@@ -160,8 +170,10 @@ Each agent perceives the world through a **Joint Embedding Predictive Architectu
   world model, cost module, actor, and configurator.
 - Maes, L., Le Lidec, Q., Scieur, D., LeCun, Y., & Balestriero, R. (2026).
   *LeWorldModel: Stable End-to-End Joint-Embedding Predictive Architecture
-  from Pixels*. arXiv:2603.19312. — Directional finite-difference gradient
-  estimation (replaces random perturbation), temporal path straightness metric.
+  from Pixels*. arXiv:2603.19312. — AdaLN action conditioning, SIGReg
+  regularization principle, temporal path straightness metric. (Our v0.2
+  SIGReg implementation is a moments-based variant — see Implementation
+  Notes below.)
 - Qu, H., Morel, M., McCabe, M., Bietti, A., Lanusse, F., Ho, S., & LeCun, Y. (2026).
   *Representation Learning for Spatiotemporal Physical Systems*. arXiv:2603.13227.
   — Linear probing of latent embeddings to test if physical parameters are captured.
@@ -171,10 +183,10 @@ Each agent perceives the world through a **Joint Embedding Predictive Architectu
 | Component | Architecture | Reference |
 |-----------|-------------|-----------|
 | Encoder | 3-layer MLP (obs → hidden → hidden → latent), RMSNorm + GELU | LeCun 2022, Section 3.1 |
-| Predictor | MLP with **Adaptive Layer Normalization** (AdaLN) — action conditions each layer's scale and shift | Maes et al. 2026, Section 3.2 |
-| SIGReg | Stochastic Isotropic Gaussian Regularization via Cramer-Wold theorem — random projections + Epps-Pulley normality test | Maes et al. 2026, Section 4 |
+| Predictor | MLP with **Adaptive Layer Normalization** (AdaLN) — action conditions each layer's scale and shift; zero-init scale/shift weights (DiT-style) | Maes et al. 2026, Section 3.2; Peebles & Xie 2022 |
+| SIGReg (v0.2) | Differentiable moments-matching variant: skewness² + kurtosis² + variance penalty along random unit-norm projections, in the spirit of Cramer-Wold gaussianity testing | Adapted from Maes et al. 2026, Section 4 |
 | CEM Planner | Cross-Entropy Method: sample action sequences, rollout in latent space, select elites, refine | LeCun 2022, Section 3.4 |
-| Training | L = L\_pred + lambda * SIGReg(Z), directional finite-difference gradients (3 directions per weight, central difference) | Maes et al. 2026, Algorithm 1 |
+| Training | L = L\_pred + λ · SIGReg(Z), **analytic backpropagation** (hand-implemented in NumPy, gradient-checked against finite differences to <1e-10), Adam optimizer with gradient clipping at 5.0 | LeCun 2022 |
 
 **Loss function:**
 
@@ -215,18 +227,23 @@ F = 5.35 * ln(CO2/280)   [Myhre et al. 1998]
 | Parameter | Value | Source |
 |-----------|-------|--------|
 | Climate sensitivity (ECS) | 3.0°C / 2xCO2 | IPCC AR6 WG1, Table 7.SM.1 |
-| Ocean heat capacity C | 7.0 W*yr/m^2/°C | Held et al. (2010), lower end |
-| Climate feedback lambda | 1.1 W/m^2/°C | IPCC AR6 |
-| Deep ocean coupling gamma | 0.7 W/m^2/°C | Gregory (2000) |
-| CO2 forcing coefficient | 5.35 W/m^2 | Myhre et al. (1998) |
-| Natural CO2 absorption | 44% of emissions | Friedlingstein et al. (2024) |
+| Ocean heat capacity C | 7.0 W·yr/m²/°C | Held et al. (2010), lower end |
+| Climate feedback λ | 1.236 W/m²/°C | Calibrated so emergent ECS = F\_2x / λ = 3.00°C exactly (v0.2 fix) |
+| Deep ocean coupling γ | 0.7 W/m²/°C | Gregory (2000) |
+| CO2 forcing coefficient | 5.35 W/m² | Myhre et al. (1998) |
+| Natural CO2 absorption | 50% of emissions (decadal mean) | Friedlingstein et al. (2024) |
 | Base emission rate | 42 GtCO2/yr | Friedlingstein et al. (2024) |
+| ppm per GtCO2 | 0.128 | IPCC AR6 WG1 Annex VII (= 1/2.13 GtC × 1/3.67) |
 
 **Resource depletion** follows Hubbert-style curves (Hubbert, 1956),
 not linear depletion. Technology provides a balancing loop
 (S-curve growth per Romer 1990).
 
-**Validated**: BAU scenario 2025→2100 passes 8/8 checks against IPCC AR6 projections.
+**Validated**: BAU scenario 2025→2100 produces 679 ppm CO2, +2.74 °C, 0.61 m
+sea-level rise — sitting between IPCC AR6 SSP2-4.5 and SSP3-7.0 envelopes.
+Carbon-cycle calibration verified against the Mauna Loa observed growth rate
+(~2.5 ppm/yr at 2025 emissions). 9/9 IPCC validation checks plus 2 unit tests
+for ECS consistency and the carbon-cycle anchor.
 
 ### 3. Geopolitics — Emergent Nation-States
 
@@ -239,24 +256,40 @@ grow large enough and merge. Interstate dynamics follow established models.
   model with calibrated logistic regression coefficients.
 - Liberal peace theory (Russett, 1993; Oneal & Russett, 1999):
   trade interdependence reduces interstate conflict probability.
+- Bremer, S. A. (1992). *Dangerous Dyads: Conditions Affecting the
+  Likelihood of Interstate War, 1816–1965*. Journal of Conflict Resolution
+  36(2), 309–341. — Power-parity effect.
+- Pettersson, T. (2024). *UCDP/PRIO Armed Conflict Dataset Codebook v24.1*.
+  Uppsala Conflict Data Program. — Empirical conflict-duration anchor.
 - Tinbergen, J. (1962). *Shaping the World Economy*. — Gravity model of trade.
 
-**Conflict probability** (per nation-dyad per tick):
+**Conflict probability** (per nation-dyad per macro tick):
 
 ```
 P(conflict) = sigmoid(
-    beta_0                              # base rate (~-4.5)
-    + beta_1 * resource_competition     # scarce resources → conflict
-    + beta_2 * power_parity             # near-peer → more likely
-    + beta_3 * (1 - trade_interdep)     # liberal peace theory
-    + beta_4 * social_tension           # Earth4All link
-    + beta_5 * territorial_overlap      # border proximity
-    - beta_6 * shared_alliances         # mutual allies → peace
-    - beta_7 * diplomatic_history       # positive history
+    β₀                                  # base rate (v0.2: −7.5)
+    + β₁ · resource_competition         # scarce resources → conflict
+    + β₂ · power_parity                 # near-peer → more likely (Bremer)
+    + β₃ · (1 − trade_interdependence)  # liberal peace
+    + β₄ · social_tension               # Earth4All link (v0.2: 1.5)
+    + β₅ · territorial_overlap          # border proximity
+    − β₆ · shared_alliances             # mutual allies → peace
+    − β₇ · diplomatic_history           # positive history
 )
 ```
 
-Calibrated for ~0.1-0.5% interstate conflict probability per dyad-year.
+Active-conflict intensity decays at 0.80/tick (~2.6-year half-life at the
+default 10-month macro tick), consistent with the UCDP/PRIO median armed
+conflict duration of ~3 years (Pettersson 2024).
+
+**Calibration (v0.2)**: tuned against UCDP-style active-conflict prevalence
+in a 5-nation neighbour cluster: ~10–25% / 30–50% / 50–80% prevalence at
+low / mid / high social tension. v0.1 produced ~99% / 100% / 100% prevalence
+because the previous decay (0.95) gave an effective conflict lifetime of
+~38 years; the v0.2 calibration is a coupled re-tuning of decay, lifetime
+cap, base rate, and tension coefficient. Distance calculations use haversine
+(degree-equivalents) to preserve threshold semantics while correcting the
+polar distortion of euclidean lat/lng.
 
 ### 4. Earth System — Real Geography
 
@@ -353,13 +386,13 @@ altitude, and disease environment have higher survival and reproduction rates.
 
 | Module | Lines | Purpose |
 |--------|-------|---------|
-| `agents.py` | 1,165 | Autonomous agents: JEPA cognition, physics, traits, skills, memory, social actions |
-| `world.py` | 810 | World engine: tick loop, resources, businesses, settlements, scenario dispatch |
-| `world_model.py` | 454 | JEPA implementation: encoder, predictor (AdaLN), SIGReg, CEM planner |
-| `shared_world_model.py` | 212 | Single shared JEPA for all agents with batch encode/plan |
-| `macro.py` | 493 | 14-state ODE: climate, resources, pollution, socioeconomics |
-| `geopolitics.py` | 622 | Emergent nations, alliances, trade (gravity model), conflict (IFs) |
-| `bridge.py` | 357 | Bidirectional coupling: agents <-> macro <-> geopolitics |
+| `agents.py` | 1,208 | Autonomous agents: JEPA cognition, physics, traits, skills, memory, social actions |
+| `world.py` | 1,079 | World engine: tick loop, resources, businesses, settlements, scenario dispatch, era-aware UI summaries |
+| `world_model.py` | 701 | JEPA implementation: encoder, predictor (AdaLN), SIGReg, CEM planner, deterministic batch sampling |
+| `shared_world_model.py` | 229 | Single shared JEPA for all agents with batch encode/plan |
+| `macro.py` | 512 | 14-state ODE: climate, resources, pollution, socioeconomics |
+| `geopolitics.py` | 705 | Emergent nations, alliances, trade (gravity model), conflict (IFs) |
+| `bridge.py` | 456 | Bidirectional coupling: agents <-> macro <-> geopolitics; per-cell regen baselines |
 | `history.py` | 849 | 70,000-year timeline: paleoclimate, migration, Diamond, Dawkins |
 
 ### Extensions
@@ -387,11 +420,18 @@ altitude, and disease environment have higher survival and reproduction rates.
 
 ### Tests
 
-| Test | Validates |
-|------|-----------|
-| `test_macro.py` | BAU scenario 2025-2100: 8/8 IPCC-calibrated checks |
-| `test_llm_module.py` | Fallback mode, JSON parsing, rate limiting: 9/9 |
-| `test_agent_state.py` | SoA operations, KDTree, batch metabolism: 4/4 + benchmarks |
+| Test | Validates | Count |
+|------|-----------|-------|
+| `test_macro.py` | BAU 2025–2100 vs. IPCC AR6 SSP2-4.5/SSP3-7.0 envelope; carbon-cycle vs. Mauna Loa decadal mean; ECS-consistency unit test | 9 + 2 |
+| `test_world_model.py` | JEPA training: prediction-loss reduction, action-conditioning, anti-collapse, linear probe R², CEM planner output validity | 5 |
+| `test_world_model_gradcheck.py` | Backward implementations (linear, GELU, RMSNorm, AdaLN, SIGReg) verified against finite-difference gradients to <1e-10 | 5 |
+| `test_shared_world_model.py` | Single vs. batch equivalence (max diff 1e-15), per-agent vs. plan_batch identity, edge cases | 6 |
+| `test_agents_lifecycle.py` | Era-aware lifecycle thresholds across 4 eras, modern drift bounds, paleolithic 1-tick floor | 7 |
+| `test_geopolitics.py` | Haversine correctness, conflict monotonicity, 5-nation BAU prevalence calibration, summit-cadence independence | 5 |
+| `test_world.py` | Haversine threshold semantics, snapshot iteration safety | 4 |
+| `test_bridge.py` | Behavioural identity of optimised lookups (410-agent run, 0 diffs), 6.2× hot-path speedup, edge cases | 6 |
+| `test_llm_module.py` | Fallback mode, JSON parsing, rate limiting | 9 |
+| `test_agent_state.py` | SoA operations, KDTree, batch metabolism + benchmarks | 4 |
 
 ---
 
@@ -443,6 +483,124 @@ altitude, and disease environment have higher survival and reproduction rates.
 
 ---
 
+## Implementation Notes
+
+### v0.2 calibration pass
+
+The v0.1.0 release was generated primarily with Claude Code in roughly two
+weeks. A subsequent domain-review pass identified six categories of bugs
+that affected scientific correctness without breaking the runtime:
+
+1. **JEPA training did not actually train.** v0.1 estimated gradients with
+   3 random search directions per weight matrix. For an encoder layer with
+   16 384 parameters this gave an effective signal-to-noise ratio of ~2 ×
+   10⁻⁴, so the prediction loss decreased only on the bias terms and the
+   AdaLN action-conditioning weights were never updated at all. v0.2
+   replaces this with hand-written analytic backpropagation in pure NumPy,
+   verified against finite-difference gradients to <1e-10 relative error.
+   On a synthetic toy problem with hidden physical parameters, prediction
+   loss now decreases 103× and a linear probe recovers the hidden physics
+   with R² = 0.98.
+2. **Carbon-cycle unit conversion was off by a factor of 3.67** because
+   the v0.1 code applied a GtCO₂→GtC division and then multiplied by a
+   ppm/GtCO₂ constant, double-converting. The model produced ~0.8 ppm/yr
+   vs. the Mauna Loa observed 2.5 ppm/yr. v0.2 fixes the conversion and
+   verifies against NOAA GML decadal mean.
+3. **Climate sensitivity was inconsistent** — the declared 3.0 °C ECS
+   constant was unused by the ODE; emergent ECS was 3.37 °C. v0.2
+   calibrates `λ` so the emergent value matches the declaration exactly.
+4. **Conflict prevalence saturated at ~99%** in a 5-nation BAU run because
+   conflicts decayed too slowly (38-year effective lifetime vs. UCDP
+   median ~3 years). v0.2 re-calibrates decay, lifetime cap, and logit
+   coefficients against UCDP prevalence targets.
+5. **Lifecycle thresholds were not era-scaled.** Hardcoded `age > 40 ticks`
+   reproduction threshold meant agents reproduced at 3.3 years in Modern
+   era and never reached reproductive age in Paleolithic era. v0.2
+   parameterises in real-world years with runtime conversion.
+6. **The macro/agent coupling layer had quartisch lookups in its hot
+   path**, costing ~50 ms/tick at 300 agents. v0.2 reduces to linear
+   complexity (~8 ms/tick).
+
+We document this honestly because we think the conclusion is interesting:
+**LLM-generated code can produce scientifically-flavoured architectures
+faster than humans can write them, but the physical and empirical
+calibration requires domain expertise that LLMs (at least currently)
+do not reliably substitute for.** Every fix in this list required a
+domain-grounded judgment call that the original generation pass got
+wrong despite confident-sounding code comments. The full v0.2 calibration
+pass is documented in [CHANGELOG.md](CHANGELOG.md).
+
+### v0.2.1 follow-up review
+
+A same-day follow-up review pass on v0.2.0 surfaced five additional bugs
+in the *integration glue* between the (now correctly calibrated) scientific
+modules and the simulation loop, plus several UI-payload issues. The
+themes are different from v0.2.0: where v0.2.0 was about scientific
+constants and equation correctness, v0.2.1 is about coupling, timing, and
+presentation correctness. The main entries:
+
+1. **Regen-array ratchets in `bridge.py`** — `water_regen` and
+   `minerals_regen` were multiplied by macro factors each tick with no
+   baseline reset, underflowing to zero independently of macro state.
+   `food_regen` had a related but distinct bug: a two-factor terrain
+   approximation (plains vs. all-else) that silently inflated mountain,
+   desert, and tundra regen by 5×, 10×, 3.3× relative to the five-factor
+   `ResourceMap.initialize_from_terrain`.
+2. **Tech diffusion double-credit in `geopolitics.py`** — `_diffuse_technology`
+   iterated `trade_graph.edges()` on a `DiGraph` carrying both directions
+   of every dyad, so each tick credited the lower-tech nation twice.
+3. **Stale phantom trade edges** — when a dyad's volume fell below the
+   retention threshold, the previous tick's edge persisted with its old
+   weight, feeding phantom values into liberal-peace, alliance-affinity,
+   and tech-diffusion calculations.
+4. **Paleo `_apply_ice_age_effects` ratchet + ice-retreat recovery** —
+   `food_regen *= cold_factor` compounded across tens of thousands of
+   paleo ticks, and cells once covered by ice never recovered productivity
+   when the ice retreated, inconsistent with the post-LGM recolonisation
+   record. Fixed via per-cell baselines and a `_was_iced` transition flag.
+5. **Macro `dt_years` 10× rate mismatch** — `MacroModel(dt_years = 1/12)`
+   was instantiated for the per-tick calibration test, but `world.step`
+   invokes macro every `macro_update_interval = 10` world ticks. The ODE
+   therefore integrated only one month per ten sim months, running at
+   one-tenth of the calibrated rate. Fixed by setting
+   `dt_years = macro_update_interval / 12`. The standalone `test_macro.py`
+   path is unaffected.
+
+Plus several frontend issues: top-header / sidebar climate sources
+diverged in modern era; the right-sidebar Macro panel showed frozen 2025
+values across the entire 70 000-yr history view; temperature was rendered
+as `+${value}` (yielding `+-5.13 °C` in paleo); sea-level always in cm
+(yielding `-13 000 cm` for LGM); chart lines crossed through their own
+`Max:` labels at peak values. v0.2.1 introduces an era-aware payload
+helper, paleodemographic population from McEvedy & Jones (1978) /
+Biraben (2003) / HYDE 3.1 (Klein Goldewijk et al. 2010) for the paleo
+panel, and small format helpers (`fmtSigned`, `fmtSeaLevel`).
+
+The pattern echoes v0.2.0: even after a calibration pass that fixed the
+"science layer", a second pass at the *coupling* and *presentation*
+layers still found real bugs that affect what a reader of the simulation
+output would see. We document this not to claim every bug has now been
+found — it almost certainly hasn't — but to be honest about the cost of
+auditing LLM-generated code.
+
+### Calibration philosophy
+
+Where multiple plausible parameter sets exist, we anchor against
+observation rather than to round-number defaults:
+
+- Carbon cycle to Mauna Loa decadal mean (NOAA GML 2014–2024).
+- Climate physics to IPCC AR6 SSP-envelope projections and Held et al.
+  two-layer energy balance.
+- Conflict to UCDP/PRIO prevalence in regional clusters (the equivalent
+  of "all 5 nations are neighbours on one continent").
+- Agent lifecycle to anthropological / demographic ranges
+  (15-year reproduction, 80-year lifespan, 60-year senescence onset).
+
+Every calibration choice is verified by a test that would catch a
+regression from a future refactor.
+
+---
+
 ## References
 
 ### Machine Learning & AI Architecture
@@ -464,63 +622,80 @@ altitude, and disease environment have higher survival and reproduction rates.
 
 10. EPICA Community Members (2004). Eight glacial cycles from an Antarctic ice core. *Nature* 429, 623-628.
 11. Petit, J. R., et al. (1999). Climate and atmospheric history from the Vostok ice core. *Nature* 399, 429-436.
-12. Jouzel, J., et al. (2007). Orbital and millennial Antarctic climate variability. *Science* 317, 793-796.
-13. Marcott, S. A., et al. (2013). A reconstruction of regional and global temperature for the past 11,300 years. *Science* 339, 1198-1201.
-14. Spratt, R. M., & Lisiecki, L. E. (2016). A Late Pleistocene sea level stack. *Climate of the Past* 12, 1079-1092.
-15. Clark, P. U., et al. (2009). The Last Glacial Maximum. *Science* 325, 710-714.
+12. Lüthi, D., et al. (2008). High-resolution carbon dioxide concentration record 650 000–800 000 years before present. *Nature* 453, 379-382.
+13. Jouzel, J., et al. (2007). Orbital and millennial Antarctic climate variability. *Science* 317, 793-796.
+14. Marcott, S. A., et al. (2013). A reconstruction of regional and global temperature for the past 11,300 years. *Science* 339, 1198-1201.
+15. Spratt, R. M., & Lisiecki, L. E. (2016). A Late Pleistocene sea level stack. *Climate of the Past* 12, 1079-1092.
+16. Clark, P. U., et al. (2009). The Last Glacial Maximum. *Science* 325, 710-714.
+17. Adams, J. M., & Faure, H. (1998). A new estimate of changing carbon storage on land since the last glacial maximum. *Global and Planetary Change* 16-17, 3-24.
+18. Crowley, T. J., & Baum, S. K. (1997). Effect of vegetation on an ice-age climate model simulation. *Journal of Geophysical Research* 102, 16463-16480.
+
+### Paleodemography (paleo-era population display)
+
+19. McEvedy, C., & Jones, R. (1978). *Atlas of World Population History*. Penguin.
+20. Biraben, J.-N. (2003). An essay concerning mankind's evolution. *Population & Societies* 394, 1-4.
+21. Klein Goldewijk, K., Beusen, A., van Drecht, G., & de Vos, M. (2010). HYDE 3.1: Long-term dynamic modelling of global population and built-up area. *The Holocene* 20, 565-573.
 
 ### System Dynamics & Economics
 
-16. Meadows, D. H., et al. (1972). *The Limits to Growth*. Universe Books.
-17. Meadows, D. H., Randers, J., & Meadows, D. L. (2004). *Limits to Growth: The 30-Year Update*. Chelsea Green.
-18. Dixson-Decleve, S., Gaffney, O., Ghosh, J., Randers, J., Rockstrom, J., & Stoknes, P. E. (2022). *Earth for All: A Survival Guide for Humanity*. New Society Publishers.
-19. Piketty, T. (2014). *Capital in the Twenty-First Century*. Harvard University Press.
-20. Nordhaus, W. D. (2017). Revisiting the social cost of carbon. *PNAS* 114(7), 1518-1523.
-21. Romer, P. M. (1990). Endogenous technological change. *Journal of Political Economy* 98(5), S71-S102.
-22. Hubbert, M. K. (1956). Nuclear energy and the fossil fuels. *Shell Development Company Publication* 95.
+22. Meadows, D. H., et al. (1972). *The Limits to Growth*. Universe Books.
+23. Meadows, D. H., Randers, J., & Meadows, D. L. (2004). *Limits to Growth: The 30-Year Update*. Chelsea Green.
+24. Dixson-Decleve, S., Gaffney, O., Ghosh, J., Randers, J., Rockstrom, J., & Stoknes, P. E. (2022). *Earth for All: A Survival Guide for Humanity*. New Society Publishers.
+25. Piketty, T. (2014). *Capital in the Twenty-First Century*. Harvard University Press.
+26. Nordhaus, W. D. (2017). Revisiting the social cost of carbon. *PNAS* 114(7), 1518-1523.
+27. Romer, P. M. (1990). Endogenous technological change. *Journal of Political Economy* 98(5), S71-S102.
+28. Hubbert, M. K. (1956). Nuclear energy and the fossil fuels. *Shell Development Company Publication* 95.
 
 ### Geography, Evolution & Civilization
 
-23. Diamond, J. (1997). *Guns, Germs, and Steel: The Fates of Human Societies*. W. W. Norton.
-24. Dawkins, R. (2009). *The Greatest Show on Earth: The Evidence for Evolution*. Transworld Publishers.
-25. Stringer, C. (2012). *The Origin of Our Species*. Penguin.
-26. Marshak, S. (2019). *Earth: Portrait of a Planet* (6th ed.). W. W. Norton. ISBN 978-0393640137.
-27. Whittaker, R. H. (1975). *Communities and Ecosystems* (2nd ed.). Macmillan.
+29. Diamond, J. (1997). *Guns, Germs, and Steel: The Fates of Human Societies*. W. W. Norton.
+30. Dawkins, R. (2009). *The Greatest Show on Earth: The Evidence for Evolution*. Transworld Publishers.
+31. Stringer, C. (2012). *The Origin of Our Species*. Penguin.
+32. Marshak, S. (2019). *Earth: Portrait of a Planet* (6th ed.). W. W. Norton. ISBN 978-0393640137.
+33. Whittaker, R. H. (1975). *Communities and Ecosystems* (2nd ed.). Macmillan.
 
 ### Geopolitics & Conflict
 
-28. Hughes, B. B. (2019). *International Futures (IFs): Building and Using Global Models*. Elsevier Academic Press.
-29. Russett, B. (1993). *Grasping the Democratic Peace*. Princeton University Press.
-30. Oneal, J. R., & Russett, B. (1999). The Kantian peace: The pacific benefits of democracy, interdependence, and international organizations, 1885–1992. *World Politics* 52(1), 1-37.
-31. Tinbergen, J. (1962). *Shaping the World Economy*. Twentieth Century Fund.
+34. Hughes, B. B. (2019). *International Futures (IFs): Building and Using Global Models*. Elsevier Academic Press.
+35. Russett, B. (1993). *Grasping the Democratic Peace*. Princeton University Press.
+36. Oneal, J. R., & Russett, B. (1999). The Kantian peace: The pacific benefits of democracy, interdependence, and international organizations, 1885–1992. *World Politics* 52(1), 1–37.
+37. Tinbergen, J. (1962). *Shaping the World Economy*. Twentieth Century Fund.
+38. Bremer, S. A. (1992). Dangerous dyads: Conditions affecting the likelihood of interstate war, 1816–1965. *Journal of Conflict Resolution* 36(2), 309–341.
+39. Pettersson, T. (2024). *UCDP/PRIO Armed Conflict Dataset Codebook v24.1*. Uppsala Conflict Data Program. https://ucdp.uu.se/
+40. Homer-Dixon, T. F. (1999). *Environment, Scarcity, and Violence*. Princeton University Press.
+41. Leeds, B. A. (2003). Alliance reliability in times of war: Explaining state decisions to violate treaties. *International Organization* 57(4), 801–827.
 
 ### Agriculture & Resources
 
-32. Licker, R., et al. (2010). Mind the gap: how do climate and agricultural management explain the 'yield gap' of croplands? *Global Ecology and Biogeography* 19(6), 769-782.
-33. Mueller, N. D., et al. (2012). Closing yield gaps through nutrient and water management. *Nature* 490, 254-257.
-34. Arndt, N. T., et al. (2017). Future global mineral resources. *Geochemical Perspectives* 6(1), 1-171.
-35. Sillitoe, R. H. (2010). Porphyry copper systems. *Economic Geology* 105(1), 3-41.
-36. Doll, P., et al. (2003). A global hydrological model for deriving water availability indicators. *Journal of Hydrology* 270(1-2), 105-134.
-37. Vorosmarty, C. J., et al. (2010). Global threats to human water security and river biodiversity. *Nature* 467, 555-561.
-38. BGR (2019). *Energy Study 2019: Data and Developments Concerning German and Global Energy Supplies*. Bundesanstalt fur Geowissenschaften und Rohstoffe.
+42. Licker, R., et al. (2010). Mind the gap: how do climate and agricultural management explain the 'yield gap' of croplands? *Global Ecology and Biogeography* 19(6), 769-782.
+43. Mueller, N. D., et al. (2012). Closing yield gaps through nutrient and water management. *Nature* 490, 254-257.
+44. Arndt, N. T., et al. (2017). Future global mineral resources. *Geochemical Perspectives* 6(1), 1-171.
+45. Sillitoe, R. H. (2010). Porphyry copper systems. *Economic Geology* 105(1), 3-41.
+46. Doll, P., et al. (2003). A global hydrological model for deriving water availability indicators. *Journal of Hydrology* 270(1-2), 105-134.
+47. Vorosmarty, C. J., et al. (2010). Global threats to human water security and river biodiversity. *Nature* 467, 555-561.
+48. BGR (2019). *Energy Study 2019: Data and Developments Concerning German and Global Energy Supplies*. Bundesanstalt fur Geowissenschaften und Rohstoffe.
 
 ### Ecology & Biogeography
 
-39. Hartmann, D. L. (2016). *Global Physical Climatology* (2nd ed.). Elsevier.
-40. Schneider, T., et al. (2014). Migrations and dynamics of the ITCZ. *Nature* 513, 45-53.
-41. Hoskins, B. J., & Valdes, P. J. (1990). On the existence of storm-tracks. *Journal of the Atmospheric Sciences* 47(15), 1854-1864.
-42. Roe, G. H. (2005). Orographic precipitation. *Annual Review of Earth and Planetary Sciences* 33, 645-671.
-43. Schlenker, W., & Roberts, M. J. (2009). Nonlinear temperature effects indicate severe damages to U.S. crop yields. *PNAS* 106(37), 15594-15598.
-44. Schewe, J., et al. (2014). Multimodel assessment of water scarcity under climate change. *PNAS* 111(9), 3245-3250.
+49. Hartmann, D. L. (2016). *Global Physical Climatology* (2nd ed.). Elsevier.
+50. Schneider, T., et al. (2014). Migrations and dynamics of the ITCZ. *Nature* 513, 45-53.
+51. Hoskins, B. J., & Valdes, P. J. (1990). On the existence of storm-tracks. *Journal of the Atmospheric Sciences* 47(15), 1854-1864.
+52. Roe, G. H. (2005). Orographic precipitation. *Annual Review of Earth and Planetary Sciences* 33, 645-671.
+53. Schlenker, W., & Roberts, M. J. (2009). Nonlinear temperature effects indicate severe damages to U.S. crop yields. *PNAS* 106(37), 15594-15598.
+54. Schewe, J., et al. (2014). Multimodel assessment of water scarcity under climate change. *PNAS* 111(9), 3245-3250.
 
 ### Earth Observation Data
 
-45. NOAA Global Monitoring Laboratory — Mauna Loa CO2 record. https://gml.noaa.gov/
-46. NASA GISS Surface Temperature Analysis (GISTEMP v4). https://data.giss.nasa.gov/gistemp/
-47. World Bank Open Data. https://data.worldbank.org/
-48. Natural Earth. https://www.naturalearthdata.com/ (public domain).
-49. USGS Mineral Commodity Summaries. https://www.usgs.gov/
-50. Peixoto, J. P., & Oort, A. H. (1992). *Physics of Climate*. AIP Press.
+55. NOAA Global Monitoring Laboratory — Mauna Loa CO2 record. https://gml.noaa.gov/
+56. NASA GISS Surface Temperature Analysis (GISTEMP v4). https://data.giss.nasa.gov/gistemp/
+57. World Bank Open Data. https://data.worldbank.org/
+58. Natural Earth. https://www.naturalearthdata.com/ (public domain).
+59. USGS Mineral Commodity Summaries. https://www.usgs.gov/
+60. Peixoto, J. P., & Oort, A. H. (1992). *Physics of Climate*. AIP Press.
+
+### Reproducibility & ML Methodology
+
+61. Pineau, J., et al. (2019). Improving Reproducibility in Machine Learning Research (a Report from the NeurIPS 2019 Reproducibility Program). *arXiv:1906.06337*.
 
 ---
 

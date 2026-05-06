@@ -208,6 +208,20 @@ class Agent:
     POPULATION_PRESSURE_RADIUS = 3.0  # Degrees: crowding pushes agents outward
     POPULATION_PRESSURE_FORCE = 0.05  # Outward push per nearby agent
 
+    # Life-cycle thresholds expressed in REAL-WORLD YEARS, not ticks.
+    # These get converted to ticks at runtime via _yrs_to_ticks() using the
+    # current era's time scale. This keeps behavior coherent across the
+    # Paleolithic-to-Modern range of 200 years/tick down to 1 month/tick.
+    REPRODUCE_MIN_AGE_YEARS = 15.0       # Earliest reproductive age
+    REPRODUCE_COOLDOWN_YEARS = 6.0       # Years between own births
+    AGING_THRESHOLD_YEARS = 60.0         # Onset of senescence health decline
+    METABOLISM_DOUBLE_YEARS = 666.0      # Years at which age-related metab. doubles
+                                         # (kept at the implicit Modern-era value
+                                         #  8000 ticks * (1/12) yr/tick = 666 yr,
+                                         #  so Modern behavior is unchanged)
+    LIFESPAN_NORM_YEARS = 80.0           # Normalization for obs[4] age input
+    SOCIALIZE_MIN_AGE_YEARS = 8.0        # Earliest age that motivates socializing
+
     def __init__(self, x: float, y: float,
                  parent_a: Optional['Agent'] = None,
                  parent_b: Optional['Agent'] = None):
@@ -279,6 +293,11 @@ class Agent:
         # Reproduction
         self.reproduction_cooldown = 0
         self.children_count = 0
+
+        # Era time scale cache — refreshed each update() from world.
+        # Default = Modern (1 month/tick) so methods called before the first
+        # update() (e.g. during agent construction in tests) still work.
+        self._era_time_scale_cache: float = 1.0 / 12.0
 
         # LLM / God Mode attributes
         self.last_dialogue: Optional[str] = None
@@ -430,7 +449,7 @@ class Agent:
         obs[1] = self.health / 100.0
         obs[2] = self.wealth / 100.0
         obs[3] = self.happiness / 100.0
-        obs[4] = self.age / 1000.0
+        obs[4] = self.age / max(1, self._yrs_to_ticks(self.LIFESPAN_NORM_YEARS))
 
         # Local resources [5-8]
         obs[5] = world_state.get("local_food", 0) / 100.0
@@ -565,7 +584,8 @@ class Agent:
             others = [a for a in nearby if a.id != self.id and a.alive]
             if others:
                 if goal == "reproduce":
-                    candidates = [a for a in others if a.energy > 30 and a.age > 40
+                    min_age = self._yrs_to_ticks(self.REPRODUCE_MIN_AGE_YEARS)
+                    candidates = [a for a in others if a.energy > 30 and a.age > min_age
                                   and a.reproduction_cooldown <= 0]
                     if candidates:
                         target = max(candidates,
@@ -639,6 +659,18 @@ class Agent:
             return best_pos
         return None
 
+    # ------------------------------------------------------------------
+    # Era-aware time helpers
+    # ------------------------------------------------------------------
+
+    def _yrs_to_ticks(self, years: float) -> int:
+        """
+        Convert real-world years to ticks at the current era's time scale.
+        Floors to a minimum of 1 tick so that thresholds remain meaningful in
+        Paleolithic eras (200 yr/tick) where most life-cycle events are sub-tick.
+        """
+        return max(1, int(round(years / self._era_time_scale_cache)))
+
     def _evaluate_needs(self) -> dict:
         """Maslow-inspired needs hierarchy."""
         needs = {}
@@ -656,7 +688,8 @@ class Agent:
         # Social
         needs["socialize"] = (0.4 * self.traits["sociability"] *
                               max(0, (60 - self.happiness) / 60))
-        needs["reproduce"] = (0.6 if self.energy > 60 and self.age > 50
+        repro_age_ticks = self._yrs_to_ticks(self.REPRODUCE_MIN_AGE_YEARS)
+        needs["reproduce"] = (0.6 if self.energy > 60 and self.age > repro_age_ticks
                               and self.reproduction_cooldown <= 0
                               and self.wealth > 30 else 0)
 
@@ -665,8 +698,9 @@ class Agent:
         needs["research"] = 0.2 * self.traits["curiosity"] * self.traits["intelligence"]
 
         # Leadership
+        govern_age_ticks = self._yrs_to_ticks(self.SOCIALIZE_MIN_AGE_YEARS)
         needs["govern"] = (0.3 * self.traits["ambition"] *
-                           self.traits["sociability"] if self.age > 100 else 0)
+                           self.traits["sociability"] if self.age > govern_age_ticks else 0)
 
         # Macro-driven needs (respond to global conditions)
         # Migrate: flee when local conditions are bad (conflict, resource scarcity)
@@ -884,8 +918,9 @@ class Agent:
             return {"success": False, "reward": 0, "description": "Cannot reproduce now"}
 
         nearby = world.get_nearby_agents(self.lat, self.lng, radius=3.0)
+        min_age = self._yrs_to_ticks(self.REPRODUCE_MIN_AGE_YEARS)
         candidates = [a for a in nearby if a.id != self.id and a.alive
-                       and a.energy > 30 and a.age > 40
+                       and a.energy > 30 and a.age > min_age
                        and a.reproduction_cooldown <= 0]
 
         if not candidates:
@@ -902,8 +937,9 @@ class Agent:
         self.energy -= 25
         self.wealth -= 10
         partner.energy -= 15
-        self.reproduction_cooldown = 80
-        partner.reproduction_cooldown = 80
+        cooldown_ticks = self._yrs_to_ticks(self.REPRODUCE_COOLDOWN_YEARS)
+        self.reproduction_cooldown = cooldown_ticks
+        partner.reproduction_cooldown = cooldown_ticks
         self.children_count += 1
         partner.children_count += 1
 
@@ -1046,19 +1082,26 @@ class Agent:
         # Human migration rate: ~1 km/year = ~0.01 deg/year
         # At 200 yr/tick -> need ~2.0 deg/tick effective speed
         era_time_scale = getattr(world, '_era_time_scale', 1.0/12.0)
+        self._era_time_scale_cache = era_time_scale  # for _yrs_to_ticks() throughout this tick
         # Scale factor: how many "modern months" this tick represents
         self._era_speed = min(20.0, era_time_scale / (1.0/12.0))
 
-        # Metabolism - energy drain (constant regardless of era speed)
-        base_metabolism = 0.15 + (self.age / 8000.0)
+        # Metabolism — base drain plus age-related component.
+        # Age component: doubles after METABOLISM_DOUBLE_YEARS (era-scaled).
+        # In Modern this matches the previous hardcoded 8000-tick denominator
+        # (8000 ticks * 1/12 yr/tick = 666 yr); in Paleolithic the same number
+        # of years compresses to fewer ticks.
+        metab_double_ticks = self._yrs_to_ticks(self.METABOLISM_DOUBLE_YEARS)
+        base_metabolism = 0.15 + (self.age / max(1, metab_double_ticks))
         speed = np.sqrt(self.vlat**2 + self.vlng**2)
         movement_cost = speed * 0.5  # Reduced: movement is less costly in migration eras
         self.energy -= base_metabolism + movement_cost
         self.happiness *= 0.999
 
-        # Aging effects on health
-        if self.age > 800:
-            self.health -= 0.03 * (self.age / 800.0)
+        # Aging effects on health — kick in after AGING_THRESHOLD_YEARS (era-scaled)
+        aging_threshold = self._yrs_to_ticks(self.AGING_THRESHOLD_YEARS)
+        if self.age > aging_threshold:
+            self.health -= 0.03 * (self.age / aging_threshold)
             self.health += 0.01 * self.traits["resilience"]
 
         # Death check

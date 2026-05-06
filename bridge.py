@@ -16,12 +16,32 @@ References:
 """
 
 import numpy as np
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
+
+from earth import TerrainType
 
 if TYPE_CHECKING:
     from macro import MacroState
     from world import ResourceMap, Settlement, Business
     from agents import Agent
+
+
+# Per-terrain food-regeneration factors. MUST stay in sync with
+# ResourceMap.initialize_from_terrain in world.py:78-113. We mirror these
+# here (rather than copying the live food_regen array on first call) because
+# world._apply_ice_age_effects mutates food_regen multiplicatively across
+# paleo ticks (food_regen *= cold_factor), so a live snapshot taken on the
+# first modern-era bridge call in a paleo-to-modern run would capture a
+# paleo-decimated baseline. Re-deriving from terrain x fertility gives the
+# clean modern-era baseline this layer is meant to scale.
+_FOOD_REGEN_TERRAIN_FACTOR = {
+    TerrainType.OCEAN:     0.0,
+    TerrainType.PLAINS:    2.0,
+    TerrainType.FOREST:    1.0,
+    TerrainType.MOUNTAINS: 0.2,
+    TerrainType.DESERT:    0.1,
+    TerrainType.TUNDRA:    0.3,
+}
 
 
 class MacroAgentBridge:
@@ -37,6 +57,16 @@ class MacroAgentBridge:
         self._business_ticks: int = 0
         self._research_actions: int = 0
         self._total_actions: int = 0
+        # Snapshots of the resource map's regeneration arrays at first sight,
+        # so apply_macro_to_world can rebuild them as base * macro_factor each
+        # call instead of multiplying a one-way ratchet (FIX B1).
+        # food_regen baseline is DERIVED from terrain x fertility rather than
+        # copied live (see _FOOD_REGEN_TERRAIN_FACTOR comment), water and
+        # minerals are copied live since no upstream code mutates them.
+        self._base_water_regen: Optional[np.ndarray] = None
+        self._base_minerals_regen: Optional[np.ndarray] = None
+        self._base_food_regen: Optional[np.ndarray] = None
+        self._base_resource_map_id: Optional[int] = None
 
     def reset_accumulators(self):
         """Reset per-interval accumulators. Called after each macro step."""
@@ -163,6 +193,29 @@ class MacroAgentBridge:
         mineral_remaining = macro_state.minerals_global
         tech = macro_state.technology_level
 
+        # Snapshot the per-cell regen baselines once (FIX B1 + food_regen).
+        # Without this, the per-cell `*= water_factor` and `*= mineral_remaining`
+        # below would compound across every macro tick, driving regen to zero
+        # independently of the current macro state; and the previous food_regen
+        # formula (`2.0 if plains else 1.0`) silently inflated mountain/desert/
+        # tundra food_regen by 5x/10x/3.3x. Re-snap if a new resource_map is
+        # passed (e.g. simulation restart with a fresh world).
+        if (self._base_water_regen is None
+                or self._base_resource_map_id != id(resource_map)
+                or self._base_water_regen.shape != resource_map.water_regen.shape):
+            self._base_water_regen = resource_map.water_regen.copy()
+            self._base_minerals_regen = resource_map.minerals_regen.copy()
+            # food_regen baseline derived from terrain x fertility (see module
+            # comment on _FOOD_REGEN_TERRAIN_FACTOR for why this is derived,
+            # not snapshotted). Vectorized lookup: build a length-6 factor
+            # table indexed by terrain code in {0..5}, then broadcast.
+            factor_lookup = np.zeros(6, dtype=np.float64)
+            for code, factor in _FOOD_REGEN_TERRAIN_FACTOR.items():
+                factor_lookup[code] = factor
+            safe_terrain = np.clip(terrain.astype(np.int64), 0, 5)
+            self._base_food_regen = factor_lookup[safe_terrain] * fertility
+            self._base_resource_map_id = id(resource_map)
+
         rows, cols = terrain.shape
 
         for r in range(rows):
@@ -176,7 +229,6 @@ class MacroAgentBridge:
                 if t_type == 0:
                     continue
 
-                base_fertility = fertility[r, c]
                 elev = elevation[r, c]
 
                 # --- Temperature impact on fertility ---
@@ -223,15 +275,28 @@ class MacroAgentBridge:
                 # --- Apply combined modifier to regeneration rates ---
                 combined = temp_factor * pollution_factor * water_factor
 
-                # Scale food regeneration
-                original_food_regen = base_fertility * 2.0 if t_type == 1 else base_fertility * 1.0
-                resource_map.food_regen[r, c] = original_food_regen * combined
+                # Scale food regeneration. FIX: previous code used the
+                # simplified `(2.0 if plains else 1.0) * fertility` baseline,
+                # which silently boosted food_regen by 5x on mountain, 10x on
+                # desert, 3.3x on tundra relative to the per-terrain factors
+                # used in ResourceMap.initialize_from_terrain. We now use the
+                # derived per-terrain * fertility baseline cached on first call.
+                resource_map.food_regen[r, c] = (
+                    self._base_food_regen[r, c] * combined
+                )
 
-                # Water regeneration affected by freshwater stress
-                resource_map.water_regen[r, c] *= water_factor
+                # Water regeneration scaled relative to the original baseline
+                # (FIX B1: was `*= water_factor`, which compounded across calls
+                # and drove water_regen monotonically to zero).
+                resource_map.water_regen[r, c] = (
+                    self._base_water_regen[r, c] * water_factor
+                )
 
-                # Mineral availability scales with global remaining stock
-                resource_map.minerals_regen[r, c] *= mineral_remaining
+                # Mineral availability scales with global remaining stock,
+                # again rebuilt from the baseline rather than ratcheted.
+                resource_map.minerals_regen[r, c] = (
+                    self._base_minerals_regen[r, c] * mineral_remaining
+                )
 
         # --- Global resource capacity scaling ---
         # As global stocks deplete, local max capacity also drops
@@ -269,14 +334,22 @@ class MacroAgentBridge:
 
         alive = [a for a in agents if a.alive]
 
-        # Build nation membership lookup: agent_id -> NationState
+        # Build nation membership lookup: agent_id -> NationState.
+        # FIX (v0.2): the previous quadruple-nested loop was O(N * M * S * K)
+        # over (nations, settlements_per_nation, world_settlements, members),
+        # which becomes very expensive once many settlements exist (~30k+
+        # iterations per macro tick at modest scale). The new approach builds
+        # an O(S) settlement_id -> Settlement dict once, then walks the
+        # nation/settlement structure linearly.
+        settlement_by_id = {s.id: s for s in world.settlements}
         agent_nation = {}
         for nation in geopolitics.nations:
             for sid in nation.settlement_ids:
-                for s in world.settlements:
-                    if s.id == sid:
-                        for member_id in s.members:
-                            agent_nation[member_id] = nation
+                s = settlement_by_id.get(sid)
+                if s is None:
+                    continue
+                for member_id in s.members:
+                    agent_nation[member_id] = nation
 
         # Apply conflict effects
         for conflict in geopolitics.active_conflicts:
@@ -329,29 +402,55 @@ class MacroAgentBridge:
             "trade_access": 0.5,
         }
 
-        # Check for nearby conflicts
+        # Resolve a distance function: prefer World._distance_deg if available
+        # (it now uses haversine in v0.2 and matches the rest of the codebase),
+        # otherwise fall back to euclidean for tests/standalone use.
+        if world is not None and hasattr(world, "_distance_deg"):
+            distance = world._distance_deg
+        else:
+            def distance(la1, ln1, la2, ln2):
+                return float(np.sqrt((la1 - la2) ** 2 + (ln1 - ln2) ** 2))
+
+        # Check for nearby conflicts.
+        # FIX (v0.2): previous code used euclidean distance directly via
+        # np.sqrt(dlat**2 + dlng**2) — inconsistent with World._distance_deg
+        # used elsewhere in this file. Using the world's distance function
+        # gives consistent polar correction.
         if geopolitics and geopolitics.active_conflicts:
             for conflict in geopolitics.active_conflicts:
-                dist = np.sqrt(
-                    (lat - conflict.get("lat", 0)) ** 2 +
-                    (lng - conflict.get("lng", 0)) ** 2
-                )
-                if dist < conflict.get("radius", 5.0):
+                radius = conflict.get("radius", 5.0)
+                if radius <= 0:
+                    continue
+                dist = distance(lat, lng,
+                                conflict.get("lat", 0), conflict.get("lng", 0))
+                if dist < radius:
                     state["conflict_nearby"] = max(
                         state["conflict_nearby"],
-                        conflict.get("intensity", 0.5) * (1.0 - dist / conflict["radius"])
+                        conflict.get("intensity", 0.5) * (1.0 - dist / radius)
                     )
 
-        # Nation-specific tech and trade access
+        # Nation-specific tech and trade access.
+        # FIX (v0.2): the previous triple-nested loop (nations -> settlement_ids
+        # -> world.settlements) was called from get_local_state, which runs
+        # once per agent per simulation tick. At 300 agents x ~30 settlements
+        # this produced ~4.5M iterations per tick. We now build the
+        # settlement_id -> Settlement dict once and break out cleanly when a
+        # nearby settlement is found. The original `break` only exited the
+        # innermost loop, which was misleading — the outer loops kept running.
         if geopolitics and world:
+            settlement_by_id = {s.id: s for s in world.settlements}
+            found = False
             for nation in geopolitics.nations:
+                if found:
+                    break
                 for sid in nation.settlement_ids:
-                    for s in world.settlements:
-                        if s.id == sid:
-                            dist = np.sqrt((lat - s.lat)**2 + (lng - s.lng)**2)
-                            if dist < 5.0:
-                                state["nation_tech_level"] = nation.technology_level
-                                state["trade_access"] = nation.trade_openness
-                                break
+                    s = settlement_by_id.get(sid)
+                    if s is None:
+                        continue
+                    if distance(lat, lng, s.lat, s.lng) < 5.0:
+                        state["nation_tech_level"] = nation.technology_level
+                        state["trade_access"] = nation.trade_openness
+                        found = True
+                        break
 
         return state

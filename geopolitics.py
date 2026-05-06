@@ -92,13 +92,31 @@ class GeopoliticalSystem:
 
     _next_nation_id: int = 0
 
-    # IFs conflict model coefficients (Hughes 2019)
-    # Calibrated for ~0.1-0.5% interstate conflict probability per dyad-year
-    CONFLICT_BASE_RATE = -4.5         # Logit intercept (yields ~1% base probability)
+    # Conflict-probability model coefficients (logistic regression on dyad-tick).
+    #
+    # FIX (v0.2): re-calibrated against UCDP/PRIO active-conflict-prevalence
+    # rather than the (poorly-defined) "per dyad-year" target of v0.1. With
+    # the macro-update interval of 10 ticks (~10 months), v0.1 produced
+    # active-conflict prevalence ~99% in a 5-nation world and ~100% in a
+    # 10-nation world over a 75-year BAU run, while UCDP-style prevalence
+    # for a small bloc should be ~5-15% (low tension) rising to ~40-70%
+    # (high climate stress). New values target:
+    #   Friedlich (tens=0.20, 2030): ~5-15%   (Final-C: 8.5%)
+    #   Mittel    (tens=0.36, 2050): ~20-40%  (Final-C: 30.8%)
+    #   Kritisch  (tens=0.62, 2090): ~40-70%  (Final-C: 63.1%)
+    # Calibrated empirically via Monte-Carlo over the dyad RNG; see
+    # tests/test_geopolitics.py for the calibration harness.
+    #
+    # Theoretical anchors retained from v0.1:
+    # - Liberal-peace coefficient (TRADE) negative: Russett 1993 / Oneal-Russett 1999
+    # - Power-parity (PARITY) positive: Bremer 1992, Dangerous Dyads
+    # - Resource competition: Homer-Dixon 1999, environmental scarcity
+    # - Alliance restraint negative: Leeds 2003 (ATOP) on conflict suppression
+    CONFLICT_BASE_RATE = -7.5         # Logit intercept (raised severity threshold)
     CONFLICT_RESOURCE_COEFF = 2.0     # Resource competition increases conflict
     CONFLICT_PARITY_COEFF = 0.5       # Near-peer powers more likely to fight
     CONFLICT_TRADE_COEFF = -1.5       # Trade interdependence reduces conflict
-    CONFLICT_TENSION_COEFF = 3.0      # Social tension amplifies conflict
+    CONFLICT_TENSION_COEFF = 1.5      # Social tension amplifies conflict (was 3.0)
     CONFLICT_TERRITORY_COEFF = 1.0    # Territorial overlap increases conflict
     CONFLICT_ALLIANCE_COEFF = -2.0    # Shared alliances reduce conflict
     CONFLICT_HISTORY_COEFF = -0.5     # Positive diplomatic history
@@ -177,9 +195,9 @@ class GeopoliticalSystem:
                 nation_center = self._nation_center(nation, settlements)
                 if nation_center is None:
                     continue
-                dist = np.sqrt(
-                    (settlement.lat - nation_center[0]) ** 2 +
-                    (settlement.lng - nation_center[1]) ** 2
+                dist = self._great_circle_deg(
+                    settlement.lat, settlement.lng,
+                    nation_center[0], nation_center[1],
                 )
                 if dist < self.NATION_MERGE_DISTANCE:
                     nation.settlement_ids.append(settlement.id)
@@ -214,6 +232,30 @@ class GeopoliticalSystem:
                 if nation.id in self.trade_graph:
                     self.trade_graph.remove_node(nation.id)
                 self.nations.remove(nation)
+
+    @staticmethod
+    def _great_circle_deg(lat1: float, lng1: float,
+                          lat2: float, lng2: float) -> float:
+        """
+        Great-circle distance expressed in degree-equivalents (km / 111).
+
+        FIX (v0.2): the previous euclidean-in-(lat,lng) distance distorts
+        badly at high latitudes — at 60 deg N a "5-degree-distance" spans
+        ~280 km west-east versus ~555 km along the equator. Using the
+        haversine formula with the radius set so the result is in
+        degree-equivalents preserves the existing thresholds (e.g.
+        NATION_MERGE_DISTANCE = 8.0 still means ~890 km) without
+        requiring re-calibration. At low latitudes the result matches
+        euclidean to within ~1%.
+        """
+        # haversine formula in radians
+        phi1 = np.radians(lat1); phi2 = np.radians(lat2)
+        dphi = np.radians(lat2 - lat1)
+        dlmb = np.radians(lng2 - lng1)
+        a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlmb/2)**2
+        c = 2 * np.arcsin(min(1.0, np.sqrt(a)))
+        # Earth radius 6371 km, 1 deg of equator ~ 111 km
+        return float(c * 6371.0 / 111.0)
 
     def _nation_center(self, nation: NationState, settlements: list):
         """Compute geographic center of a nation's settlements."""
@@ -311,9 +353,9 @@ class GeopoliticalSystem:
 
                 # Factors that worsen relations
                 # Resource competition (close + both extractive)
-                dist = np.sqrt(
-                    (na.center_lat - nb.center_lat) ** 2 +
-                    (na.center_lng - nb.center_lng) ** 2
+                dist = self._great_circle_deg(
+                    na.center_lat, na.center_lng,
+                    nb.center_lat, nb.center_lng,
                 )
                 proximity_tension = max(0, 0.01 * (10.0 - dist) / 10.0)
 
@@ -377,9 +419,9 @@ class GeopoliticalSystem:
                     relation = (self.relation_graph[na.id][nb.id]["weight"] + 1.0) / 2.0
 
                 economic_mass = (na.total_wealth * nb.total_wealth) ** 0.5
-                distance = np.sqrt(
-                    (na.center_lat - nb.center_lat) ** 2 +
-                    (na.center_lng - nb.center_lng) ** 2
+                distance = self._great_circle_deg(
+                    na.center_lat, na.center_lng,
+                    nb.center_lat, nb.center_lng,
                 )
                 # Gravity model: trade proportional to mass, inversely to distance
                 # Source: Tinbergen 1962, gravity model of trade
@@ -391,6 +433,16 @@ class GeopoliticalSystem:
                 if volume > 0.01:
                     self.trade_graph.add_edge(na.id, nb.id, weight=volume)
                     self.trade_graph.add_edge(nb.id, na.id, weight=volume)
+                else:
+                    # FIX B3: dyad fell below the retention threshold this
+                    # tick. Without explicit removal, edges added in earlier
+                    # ticks persist with stale weights and feed phantom
+                    # values into _diffuse_technology, conflict_probability
+                    # (trade_interdep term), and _update_relations (trade_bonus).
+                    if self.trade_graph.has_edge(na.id, nb.id):
+                        self.trade_graph.remove_edge(na.id, nb.id)
+                    if self.trade_graph.has_edge(nb.id, na.id):
+                        self.trade_graph.remove_edge(nb.id, na.id)
 
     # ------------------------------------------------------------------
     # Conflict Assessment
@@ -402,11 +454,18 @@ class GeopoliticalSystem:
 
         Conflict probability model adapted from IFs / Pardee Center (Hughes 2019).
         """
-        # Decay existing conflicts
+        # Decay existing conflicts.
+        # FIX (v0.2): previous decay=0.95 with cutoff 0.05 yielded effective
+        # conflict duration of ~45 ticks (~38 years) — far longer than UCDP/PRIO
+        # median active-conflict duration of ~3 years (Pettersson 2024). The
+        # new decay=0.80 produces a ~2.6-year half-life and ~25-tick max duration,
+        # consistent with the UCDP record. Combined with the conflict-onset
+        # re-calibration this brings active-conflict prevalence into the
+        # target envelope of ~10-25% / 30-50% / 55-80% across BAU 2030/2050/2090.
         for conflict in self.active_conflicts[:]:
             conflict["duration"] += 1
-            conflict["intensity"] *= 0.95  # Conflicts lose steam
-            if conflict["intensity"] < 0.05 or conflict["duration"] > 50:
+            conflict["intensity"] *= 0.80  # ~2.6 yr half-life at 10-month tick
+            if conflict["intensity"] < 0.05 or conflict["duration"] > 25:
                 self.active_conflicts.remove(conflict)
 
         if len(self.nations) < 2:
@@ -432,9 +491,9 @@ class GeopoliticalSystem:
                     # New conflict
                     midpoint_lat = (na.center_lat + nb.center_lat) / 2
                     midpoint_lng = (na.center_lng + nb.center_lng) / 2
-                    dist = np.sqrt(
-                        (na.center_lat - nb.center_lat) ** 2 +
-                        (na.center_lng - nb.center_lng) ** 2
+                    dist = self._great_circle_deg(
+                        na.center_lat, na.center_lng,
+                        nb.center_lat, nb.center_lng,
                     )
 
                     self.active_conflicts.append({
@@ -462,11 +521,17 @@ class GeopoliticalSystem:
         macro_state: 'MacroState',
     ) -> float:
         """
-        IFs-inspired conflict probability model.
-        Source: Hughes (2019), adapted for agent simulation.
+        Logistic conflict-probability model.
 
-        Returns per-tick probability of conflict initiation.
-        Calibrated for ~0.1-0.5% per nation-dyad per macro tick.
+        Returns per-tick probability of conflict initiation between this dyad.
+        See class-level CONFLICT_* coefficient block for calibration target
+        (active-conflict prevalence in 5-nation BAU run).
+
+        Sources:
+        - Hughes (2019), International Futures (IFs) conflict module
+        - Russett (1993), Oneal & Russett (1999) — liberal peace
+        - Bremer (1992) — Dangerous Dyads, parity effect
+        - Homer-Dixon (1999) — environmental scarcity and conflict
         """
         if nation_a.population < 3 or nation_b.population < 3:
             return 0.0
@@ -498,9 +563,9 @@ class GeopoliticalSystem:
         alliance_factor = min(1.0, shared / 3.0)
 
         # Territorial proximity
-        dist = np.sqrt(
-            (nation_a.center_lat - nation_b.center_lat) ** 2 +
-            (nation_a.center_lng - nation_b.center_lng) ** 2
+        dist = self._great_circle_deg(
+            nation_a.center_lat, nation_a.center_lng,
+            nation_b.center_lat, nation_b.center_lng,
         )
         territory_overlap = max(0, 1.0 - dist / 15.0)
 
@@ -528,9 +593,13 @@ class GeopoliticalSystem:
         if len(self.nations) < 2:
             return
 
-        # Climate summit every ~24 macro ticks (~2 years)
-        total_age = sum(n.age for n in self.nations)
-        if total_age > 0 and total_age % 24 == 0:
+        # Climate summit every ~24 macro ticks (~2 years).
+        # FIX (v0.2): the previous code used `sum(n.age for n in self.nations) % 24`,
+        # which fires every 24/N ticks (for N nations all aging at +1/tick) — i.e.,
+        # every 5 ticks with 5 nations and every 24 ticks with 24 nations.
+        # We track our own counter so the cadence is independent of nation count.
+        self._negotiation_counter = getattr(self, "_negotiation_counter", 0) + 1
+        if self._negotiation_counter % 24 == 0:
             # Each nation proposes a climate pledge based on policy
             for nation in self.nations:
                 if nation.carbon_policy > 0:
@@ -550,9 +619,20 @@ class GeopoliticalSystem:
     # ------------------------------------------------------------------
 
     def _diffuse_technology(self):
-        """Knowledge transfer between trading partners."""
+        """
+        Knowledge transfer between trading partners.
+
+        FIX B2: trade_graph is a DiGraph and _resolve_trade writes both
+        (a, b) and (b, a) edges with the same weight. Iterating edges()
+        therefore visits each dyad twice; the original code credited the
+        lower-tech nation on both visits, doubling the diffusion rate
+        relative to the calibrated intent. The `na_id >= nb_id` filter
+        below ensures each unordered dyad is processed exactly once.
+        """
         for edge in self.trade_graph.edges(data=True):
             na_id, nb_id, data = edge
+            if na_id >= nb_id:
+                continue
             volume = data.get("weight", 0)
             if volume < 0.1:
                 continue

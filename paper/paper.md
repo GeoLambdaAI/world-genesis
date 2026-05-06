@@ -16,7 +16,7 @@ authors:
 affiliations:
   - name: GeoLambda GmbH, Germany
     index: 1
-date: 4 May 2026
+date: 6 May 2026
 bibliography: paper.bib
 ---
 
@@ -38,7 +38,9 @@ geographic determinism in the sense of @diamond1997guns. *Scenario B*
 initialises from present-day data (World Bank, NOAA, NASA) and projects
 forward at monthly resolution. Every parameter, equation, and boundary
 condition is grounded in published literature, and the macro layer passes
-8/8 IPCC AR6-calibrated validation checks at 2100.
+9/9 IPCC AR6-calibrated validation checks plus two unit anchors (Mauna
+Loa decadal CO₂ growth rate; emergent equilibrium climate sensitivity)
+at 2100.
 
 # Statement of need
 
@@ -77,17 +79,24 @@ nation-formation, trade, and conflict from primitive agent interactions
   probability per @hughes2019international.
 - **Real Earth geography**: Natural Earth coastlines rasterised to 0.25°,
   Whittaker [@whittaker1975communities] biomes, USGS resource provinces.
-- **Reproducibility**: deterministic seeded runs, structured CSV+JSON
-  logging, an 8/8 IPCC validation suite, a figure-generation pipeline,
-  and a published validation report.
+- **Reproducibility**: deterministic seeded runs (per-instance random
+  generators across encoder, predictor, planner, and minibatch sampling
+  decouple training from global state), structured CSV+JSON logging, a
+  9/9 IPCC validation suite plus two unit anchors, a figure-generation
+  pipeline, and a published validation report.
 
 # Validation
 
-Running the BAU macro path 2025–2100 produces CO₂ = 504.8 ppm,
-ΔT = +2.05 °C, sea-level rise = 0.572 m, and population = 8.44 B,
-all within bounds derived from the IPCC SSP1-2.6 to SSP3-7.0 envelope
-and UN World Population Prospects 2024. Full reference values, tolerance
-bands, and the reproduction command appear in `docs/validation.md`.
+Running the BAU macro path 2025–2100 produces CO₂ = 679 ppm, ΔT = +2.74 °C,
+sea-level rise = 0.61 m, and population = 8.37 B, all within bounds derived
+from the IPCC AR6 SSP2-4.5 to SSP3-7.0 envelope and the Vollset (2020) /
+UN WPP 2024 demographic range. The CO₂ growth rate around 2030 is 2.58 ppm/yr,
+inside the NOAA GML Mauna Loa decadal mean envelope of 2.4–3.0 ppm/yr; the
+emergent equilibrium climate sensitivity is 3.00 °C, matching the declared
+IPCC AR6 best estimate exactly via the calibrated climate-feedback parameter
+λ = F<sub>2x</sub>/ECS = 1.236 W m<sup>-2</sup> K<sup>-1</sup>. Full reference
+values, tolerance bands, and the reproduction command appear in
+[`docs/validation.md`](../docs/validation.md).
 
 # Acknowledgements
 

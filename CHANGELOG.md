@@ -7,6 +7,411 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-06
+
+A same-day follow-up review pass on v0.2.0 surfaced five additional bugs
+in the integration glue between the (now correctly calibrated) scientific
+modules and the simulation loop, plus several UI-payload issues that
+caused the right-sidebar dashboard to misrepresent paleo-era state. The
+eight scientific modules' equations and constants are unchanged; v0.2.1
+is purely a coupling, timing, and presentation correctness release. All
+v0.2.0 calibration tests pass unchanged.
+
+### Fixed — Macro/agent coupling (`bridge.py`)
+
+- **Water and minerals regen ratchet.** `apply_macro_to_world` was
+  multiplying `water_regen` and `minerals_regen` cell-wise by macro
+  factors on every call, with no baseline reset. Over hundreds of macro
+  ticks at typical factor < 1 the regen rates underflowed to zero
+  independently of the actual macro state. v0.2.1 snapshots the
+  resource-map's per-cell baselines on first call and rebuilds
+  `regen[r,c] = base[r,c] × factor` each tick (idempotent) — the same
+  pattern `food_regen` already followed.
+- **`food_regen` terrain-factor inflation.** The v0.2.0 formula
+  `(2.0 if plains else 1.0) × fertility × combined` collapsed five
+  terrain-specific regen factors from `ResourceMap.initialize_from_terrain`
+  (plains 2.0, forest 1.0, mountain 0.2, desert 0.1, tundra 0.3) into a
+  two-factor approximation, silently inflating mountain food regen by
+  5×, desert by 10×, and tundra by 3.3×. v0.2.1 derives the per-cell
+  baseline from `terrain × fertility` via a constants table
+  (`_FOOD_REGEN_TERRAIN_FACTOR`) that mirrors `world.py:78-113` exactly.
+  The baseline is *derived* from the terrain map rather than snapshotted
+  from the live `food_regen` array, because `world._apply_ice_age_effects`
+  mutates `food_regen` multiplicatively in paleo era and a live snapshot
+  would be contaminated on paleo→modern transitions.
+
+### Fixed — Geopolitics (`geopolitics.py`)
+
+- **Tech diffusion double-credited.** `_resolve_trade` writes both
+  `(a, b)` and `(b, a)` edges with the same weight, and
+  `_diffuse_technology` iterated `trade_graph.edges()` which yields both
+  directions; on each visit the lower-tech nation was credited.
+  Diffusion therefore ran at twice the calibrated `0.001 × volume × |Δtech|`
+  rate. Fixed by `if na_id >= nb_id: continue` inside the loop so each
+  unordered dyad is processed exactly once.
+- **Stale phantom trade edges.** `_resolve_trade` only called `add_edge`
+  when `volume > 0.01` and never `remove_edge`. When a dyad fell below
+  threshold (e.g. autarky+rivalry), the previous tick's edge persisted
+  with its old weight, feeding phantom values into
+  `conflict_probability`'s `trade_interdep` term (Russett-Oneal liberal
+  peace), `_update_relations`'s `trade_bonus`, and `_diffuse_technology`.
+  Fixed by explicit edge removal in the `else` branch.
+
+### Fixed — World engine (`world.py`)
+
+- **Paleo `_apply_ice_age_effects` ratchet + ice-retreat recovery.**
+  `food_regen *= cold_factor` compounded across thousands of paleo ticks
+  (`tick % 20 == 0 and year_bp > 5000`). With cold_factor sustained at
+  ~0.7 across ~40 000 paleo applications, `food_regen` underflowed to
+  numerical zero long before LGM. Cells that became ice-covered at any
+  point during the run had `food`, `food_regen`, `wood`, `wood_regen`,
+  and `water` zeroed and never recovered, even after ice retreated and
+  the cell became habitable — inconsistent with the post-LGM
+  recolonisation record. v0.2.1 lazy-snapshots per-cell baselines on
+  the first paleo call and uses set-from-baseline semantics; a per-cell
+  `_was_iced` boolean flag triggers post-glacial recovery seeding on
+  the iced→non-iced transition. The `cold_factor` formula is
+  unchanged — at LGM (-8 °C anomaly per EPICA/Vostok ice cores) it
+  yields ~36 % productivity, within the paleo-NPP envelope of Adams
+  & Faure (1998) and Crowley & Baum (1997).
+- **Macro `dt_years` 10× rate fix.** `MacroModel` was instantiated with
+  `dt_years = 1/12` (one month per call) but `macro.step()` is invoked
+  once per `macro_update_interval = 10` world ticks, and Modern era
+  advances time at `era.time_scale = 1/12 yr/tick`. The macro ODE
+  therefore integrated only one month per ten sim months, running at
+  one-tenth of the calibrated rate; the macro clock fell ~10× behind
+  the historical clock and CO₂/temperature/sea-level evolved
+  proportionally slowly. v0.2.1 sets
+  `dt_years = macro_update_interval / 12 = 10/12`, keeping both clocks
+  synchronous. The IPCC AR6 SSP envelope outputs at 2100 are preserved
+  (681 vs 679 ppm CO₂, 0.3 % drift; same temperature and sea level)
+  because `solve_ivp(method='RK23')` adapts internally; the standalone
+  `test_macro.py` calibration path is unaffected (it instantiates
+  `MacroModel` with its own `dt_years = 1/12` and calls `step()` per
+  iteration, the originally calibrated path).
+- **Era-aware UI payload (`_build_era_aware_summaries`).** In paleo era
+  the `MacroModel` ODE does not step (industrial economy emerges only
+  post-1750), so `macro.get_summary()` returned `MacroState` defaults
+  frozen at year 2025; the right-sidebar Global State panel never
+  reflected the paleoclimate trajectory across the 70 000-yr history
+  view. v0.2.1 introduces a single helper called from both
+  `World.step()` (for the websocket "tick" emit) and
+  `World.get_full_state()` (for "full_state"), so both paths deliver
+  identical payloads. In paleo era it populates climate fields from
+  `PaleoclimateModel` (calibrated to EPICA Dome C, Lüthi et al. 2008,
+  and Vostok, Petit et al. 1999) and population from the new
+  paleodemographic helper `_paleo_population_billions` (sourced from
+  McEvedy & Jones 1978; Biraben 2003; HYDE 3.1, Klein Goldewijk et al.
+  2010). Industrial-era fields carry their pre-industrial physical
+  values: `fossil_fuels = 1.0`, `renewable_frac = 0.0`,
+  `pollution = 0.0`. Technology is normalised by tech-tree size so it
+  rises smoothly toward `MacroState.technology_level = 1.0` at the
+  Industrial-era handoff. In modern era the helper continues to
+  override `history.{co2_ppm, temperature_anomaly, sea_level_m,
+  year_*}` with `MacroModel.state` values so the top-header and sidebar
+  surfaces stay coherent (a fix originally introduced in v0.2.0 for the
+  `step()` path; v0.2.1 extends it to the `get_full_state()` path that
+  the websocket `'full_state'` event actually consumes).
+- **Settlement count in geopolitics summary.** Nations form only when
+  settlements grow ≥ `NATION_FORMATION_POP` ([geopolitics.py:125](geopolitics.py#L125)),
+  so in paleo era `nations` / `active_conflicts` / `trade_volume` are
+  zero by design. v0.2.1 injects `settlements = len(self.settlements)`
+  into the geopolitics summary so the Nations tab reflects pre-nation
+  tribal/clustered activity that does evolve through paleo time.
+
+### Fixed — JEPA agent cognition (`world_model.py`)
+
+- **Deterministic training-batch sampling.** `train_step` used global
+  `np.random.choice` for minibatch index selection, coupling training
+  reproducibility to whatever else in the simulation last consumed
+  `np.random` state. v0.2.1 introduces
+  `self._train_rng = np.random.RandomState(seed + 13)` for dedicated,
+  deterministic batch sampling. Distributional properties
+  (uniform-without-replacement) are unchanged; gradient expectation,
+  variance, and SGD convergence are unchanged. The fix removes a
+  reproducibility anti-pattern (Pineau et al. 2019) without altering
+  scientific behaviour.
+
+### Fixed — Test isolation (`test_agents_lifecycle.py`)
+
+- **Stub leak across test files.** The test file unconditionally
+  installed a `_DummyJEPA` stub into `sys.modules['world_model']` at
+  import time and never cleaned up. Pytest collects test files in
+  alphabetical order, so `test_agents_lifecycle.py` permanently
+  replaced `sys.modules['world_model']`; `test_shared_world_model.py`
+  then imported the dummy instead of the real `JEPAWorldModel`,
+  causing six false failures in the full-suite run that did not
+  reproduce when the file was tested in isolation. Fixed by trying
+  the real import first and only stubbing on `ImportError`.
+
+### Fixed — Frontend (`templates/index.html`)
+
+- **Tick-handler dashboard updates.** The Macro and Nations panels
+  only updated on the websocket `'full_state'` event (every 10 ticks),
+  so panels lagged the simulation and could show stale values across
+  server restarts. v0.2.1 also calls `updateMacroDashboard` and
+  refreshes the geopolitics summary on every `'tick'` event for
+  low-latency UI feedback.
+- **Sign and unit formatting.** Temperature was rendered as `+${value}`
+  unconditionally, producing `+-5.13 °C` for paleo negative
+  temperatures. Sea level was always rendered in cm, producing the
+  unreadable `-13 000 cm` for LGM Vostok-record sea-level (-130 m).
+  v0.2.1 introduces `fmtSigned(v, dp)` (no double-sign on negatives,
+  uses `??` for null/undefined detection so a legitimate `0 °C` no
+  longer falls back to the default `+1.30`) and `fmtSeaLevel(m)`
+  (adaptive cm / m units based on `|m| ≥ 1`).
+- **Chart line padding.** `drawLineChart` had only 5 px of top
+  padding while labels are drawn at y = 12 with a 10 px font (glyphs
+  occupy y ≈ 2..14), so the line crossed through `Max:` and label
+  readouts at peak values. Padding extended to 20 px. Applies to all
+  five charts that share the helper (climate, tension, population,
+  economy, happiness).
+
+### Added — Documentation references
+
+- McEvedy, C. & Jones, R. (1978). *Atlas of World Population History*.
+  Penguin.
+- Biraben, J.-N. (2003). An essay concerning mankind's evolution.
+  *Population & Societies* 394, 1-4.
+- Klein Goldewijk, K., Beusen, A., van Drecht, G., & de Vos, M. (2010).
+  HYDE 3.1: Long-term dynamic modelling of global population and built-up
+  area in a spatially explicit way. *The Holocene* 20, 565-573.
+- Adams, J. M. & Faure, H. (1998). A new estimate of changing carbon
+  storage on land since the last glacial maximum. *Global and Planetary
+  Change* 16-17, 3-24.
+- Crowley, T. J. & Baum, S. K. (1997). Effect of vegetation on an
+  ice-age climate model simulation. *Journal of Geophysical Research*
+  102, 16463-16480.
+- Lüthi, D., et al. (2008). High-resolution carbon dioxide concentration
+  record 650 000-800 000 years before present. *Nature* 453, 379-382.
+- Pineau, J., et al. (2019). Improving Reproducibility in Machine
+  Learning Research. *arXiv:1906.06337*.
+
+### Migration notes
+
+- All public APIs are unchanged. `World`, `Agent`, `MacroModel`,
+  `GeopoliticalSystem`, `MacroAgentBridge`, `SharedWorldModel`,
+  `JEPAWorldModel` retain identical method signatures.
+- Internal additions: `World._build_era_aware_summaries()` (private),
+  `world._paleo_population_billions()` and `_PALEO_POP_TABLE` (module
+  level). `ResourceMap` gained `_baseline_food`, `_baseline_food_regen`,
+  `_baseline_wood`, `_baseline_wood_regen`, `_baseline_water`,
+  `_was_iced` lazy-initialised fields. `MacroAgentBridge` gained
+  `_base_water_regen`, `_base_minerals_regen`, `_base_food_regen`,
+  `_base_resource_map_id` lazy-initialised fields.
+  `JEPAWorldModel` gained `_train_rng`. None of these are part of any
+  public API.
+- Saved `experience_buffer` data from v0.2.0 will load correctly; the
+  trained weights are unchanged.
+
+## [0.2.0] - 2026-05-06
+
+This release is a **scientific calibration pass** prompted by domain review of
+the v0.1.0 implementation. Six categories of bugs were identified — affecting
+JEPA training, climate physics, conflict modelling, agent lifecycle scaling,
+and the macro/agent coupling layer — and fixed with empirical verification.
+
+The user-facing API surface is unchanged; this is a behavioural correctness
+release, not a refactor.
+
+### Fixed — JEPA agent cognition (`world_model.py`, `shared_world_model.py`)
+
+- **Replaced finite-difference gradient estimation with analytic backpropagation.**
+  v0.1 used 3 random search directions per weight matrix, which provides an
+  unbiased but extremely high-variance gradient estimate; effective learning
+  rate scaled as `n_directions / n_params`, meaning ~5500 steps per "real"
+  weight update at the encoder's `W2` layer. v0.2 implements hand-written
+  backward passes for all primitives (linear, RMSNorm, GELU, AdaLN, residual)
+  in pure NumPy, each verified against finite-difference gradient checks
+  (relative error < 1e-10).
+- **Trained AdaLN parameters.** The action-conditioning weights
+  (`W_ada1_scale`, `W_ada1_shift`, `W_ada2_scale`, `W_ada2_shift`) and RMSNorm
+  gamma parameters were missing from the trainable set in v0.1. The predictor
+  could therefore not learn how actions modify dynamics; CEM planning operated
+  on effectively random rollouts. v0.2 trains all parameters and verifies
+  empirically that opposite actions produce ~36% relative latent response.
+- **SIGReg gradients now flow into the loss.** v0.1 computed the regularizer
+  but recomputed only the prediction loss inside the gradient routine, so the
+  anti-collapse signal had no training effect. v0.2 uses a moments-based
+  variant (skewness² + kurtosis² + variance penalty along random projections)
+  that is analytically differentiable, in the spirit of Cramer-Wold gaussianity
+  testing but distinct from the original Epps-Pulley formulation.
+- **Adam optimizer with gradient clipping** replaces the v0.1 plain SGD step.
+- Added Adam state, residual connection (`z_next = z + delta` instead of the
+  hardcoded `0.8*z_next + 0.2*z` mix), and DiT-style zero-initialisation of
+  AdaLN scale/shift weights (Peebles & Xie 2022).
+- Linear-probe `obs_indices` and `obs_scales` made configurable; previous
+  hardcoded slot indices `[32, 34, 36]` would silently break if the agent
+  observation layout changed.
+- `SharedWorldModel` rewritten as a thin wrapper around `JEPAWorldModel`,
+  removing duplicated training logic. The vectorised `plan_batch` was
+  reimplemented and verified to produce bit-identical results to per-agent
+  CEM at the equator (Test: max diff 1e-15).
+- **Empirical validation** on a synthetic toy problem with hidden physical
+  parameters: prediction loss reduced 103×, latent variance preserved
+  (no collapse), linear-probe R² = 0.98 for hidden physics.
+
+### Fixed — Macro climate physics (`macro.py`)
+
+- **Carbon-cycle unit conversion bug.** v0.1 divided by 3.67 (GtCO₂ → GtC) and
+  then multiplied by `CO2_PER_GT = 0.128`, but 0.128 is *already* ppm/GtCO₂,
+  not ppm/GtC. The conversion was effectively applied twice, underestimating
+  the CO₂ rise by a factor of 3.67. The model produced ~0.8 ppm/yr at typical
+  2025 emissions, vs. the Mauna Loa observed ~2.5 ppm/yr. v0.2 verifies
+  against Mauna Loa decadal mean (NOAA GML 2014–2024).
+- **Climate-sensitivity inconsistency resolved.** v0.1 declared
+  `CLIMATE_SENSITIVITY = 3.0 °C` but the emergent ECS from the two-layer
+  energy balance was `F_2x / λ = 3.708 / 1.1 = 3.37 °C`, at the upper end
+  of the IPCC AR6 likely range. v0.2 sets `CLIMATE_FEEDBACK = 1.236` so
+  emergent ECS equals the declared 3.0 °C exactly.
+- **Carbon sink rate updated to decadal mean.** `NATURAL_ABSORPTION_RATE`
+  raised from 0.44 (interannual airborne fraction lower bound) to 0.50
+  (decadal mean per Friedlingstein et al. 2024 *Global Carbon Budget*).
+- Test ranges tightened: previous BAU validation accepted CO₂ between
+  500–800 ppm (>50% bandwidth). v0.2 validates against the IPCC AR6
+  SSP2-4.5 to SSP3-7.0 envelope (600–800 ppm at 2100), plus a strict
+  carbon-cycle unit test against the Mauna Loa observation.
+- Stress-tested for numerical stability over 200-year runs and dt
+  sensitivity across 4 orders of magnitude (1 day to 1 year per step):
+  identical results.
+
+### Fixed — Geopolitics conflict model (`geopolitics.py`)
+
+- **Conflict prevalence re-calibrated.** v0.1 produced active-conflict
+  prevalence of ~99% in a 5-nation BAU run over 75 years. The dominant
+  cause was a slow conflict decay (`intensity *= 0.95` with cutoff 0.05
+  yields ~45-tick lifetime ≈ 38 years), far exceeding the UCDP/PRIO
+  median active-conflict duration of ~3 years (Pettersson 2024). v0.2
+  uses `decay = 0.80` (~2.6-year half-life at 10-month tick) and a
+  `duration > 25` cap, combined with re-tuned coefficients
+  (`CONFLICT_BASE_RATE: −4.5 → −7.5`, `CONFLICT_TENSION_COEFF: 3.0 → 1.5`)
+  calibrated against UCDP-style prevalence targets for a 5-nation
+  neighbour cluster: ~10–25% / 30–50% / 50–80% at low / mid / high social
+  tension. Empirical 5-nation BAU run: 23% / 33% / 55%.
+- **Climate-summit cadence bug fixed.** v0.1 used
+  `sum(n.age for n in nations) % 24 == 0` to trigger summits, which fires
+  every `24 / N` ticks for `N` nations all aging at +1/tick — i.e. every
+  5 ticks with 5 nations, not the intended every 24 ticks. v0.2 uses a
+  dedicated counter independent of nation count.
+- **Haversine distance** replaces euclidean lat/lng for all five
+  inter-nation distance calculations (formation merge threshold,
+  resource-competition proximity, gravity-trade distance, conflict
+  midpoint radius, territorial overlap). At 60°N, a "5-degree distance"
+  along longitude was previously distorted by 50%; the new formulation
+  preserves the existing degree-equivalent thresholds while correcting
+  polar geometry.
+- Misleading docstring `"~0.1-0.5% per dyad-year"` removed; new docstring
+  references calibration target and theoretical anchors (Russett 1993,
+  Bremer 1992, Homer-Dixon 1999, Leeds 2003 ATOP).
+
+### Fixed — Agent lifecycle (`agents.py`)
+
+- **Era-scaled lifecycle thresholds.** v0.1 had hardcoded thresholds in
+  ticks (e.g. `age > 40` for reproduction, `reproduction_cooldown = 80`,
+  `age > 800` for senescence). With Modern era at 1 month/tick, these
+  produced reproduction at 3.3 years (biologically absurd) and a 67-year
+  senescence onset; with Paleolithic era at 200 yr/tick, the same
+  thresholds compressed to 8 000 / 16 000 / 160 000 years respectively
+  (agents never reached reproductive age). v0.2 introduces six lifecycle
+  constants in real-world years (`REPRODUCE_MIN_AGE_YEARS = 15.0`,
+  `REPRODUCE_COOLDOWN_YEARS = 6.0`, `AGING_THRESHOLD_YEARS = 60.0`,
+  `METABOLISM_DOUBLE_YEARS = 666.0`, `LIFESPAN_NORM_YEARS = 80.0`,
+  `SOCIALIZE_MIN_AGE_YEARS = 8.0`) and a `_yrs_to_ticks()` helper that
+  converts at runtime using the current era's time scale. Modern-era
+  drift from previous behaviour is at most 10% (cooldown, aging),
+  except reproduction which is corrected from 3.3 → 15 years; in
+  Paleolithic, sub-200-year thresholds floor to 1 tick, giving
+  generation-per-tick semantics.
+
+### Fixed — World engine (`world.py`)
+
+- **Iteration-mutation safety.** The agent update loop iterated
+  `for agent in self.agents`, but `agent.update()` can call
+  `world.add_agent(child)` via `_action_reproduce`, appending to
+  `self.agents` during iteration. In CPython this is deterministic but
+  semantically wrong: newborns received metabolism costs and could act
+  in their birth tick. v0.2 iterates over a `list(self.agents)`
+  snapshot, deferring newborns to the next tick.
+- **Haversine distance** replaces euclidean in `_distance_deg`. This
+  method is also used by `bridge.apply_geopolitics_to_agents` for
+  conflict-zone proximity, which now benefits from the polar correction
+  automatically. The static-method signature is unchanged.
+
+### Fixed — Macro/agent coupling (`bridge.py`)
+
+- **Settlement lookup performance.** The agent-nation lookup in
+  `apply_geopolitics_to_agents` was a quartisch nested loop
+  `O(N × M × S × K)` over (nations, settlements_per_nation,
+  world_settlements, members). v0.2 builds a `settlement_id → Settlement`
+  dict once per call and reduces complexity to `O(S + Σ K_s)`. Measured
+  speedup: 3.4× at 150 settlements.
+- **Hot-path lookup performance.** `get_macro_local_state` is called
+  per-agent per-tick from `World.get_local_state`. v0.1 used a
+  triple-nested loop (nations → settlement_ids → world.settlements) in
+  this hot path; the misleading `break` exited only the innermost loop.
+  v0.2 uses the same dict-cached lookup with proper outer-loop exit.
+  Measured speedup at 300 agents / 80 settlements: **6.2×**
+  (50 ms/tick → 8 ms/tick).
+- **Distance consistency.** `get_macro_local_state` previously used raw
+  euclidean `np.sqrt(dlat² + dlng²)` while `apply_geopolitics_to_agents`
+  in the same module already used `world._distance_deg`. v0.2 routes
+  both through `world._distance_deg` (haversine), restoring polar
+  correction in conflict-nearby and nation-tech-level lookups.
+- **Defensive zero-radius handling.** Conflicts with `radius == 0` no
+  longer cause division-by-zero in the proximity damage calculation.
+- Behaviour identity verified at agent level: 410-agent run produces
+  bit-identical health / wealth / happiness / skill outputs as the v0.1
+  algorithm on the same inputs.
+
+### Added — Tests
+
+- `tests/test_world_model_gradcheck.py` — finite-difference gradient
+  verification of every backward implementation (linear, GELU, RMSNorm,
+  AdaLN, SIGReg). Relative error < 1e-10 on all primitives.
+- `tests/test_world_model.py` — end-to-end JEPA training on toy
+  dynamics: prediction loss reduction, action-conditioning, anti-collapse,
+  linear probe R², CEM planner output validity (5/5).
+- `tests/test_shared_world_model.py` — single vs. batch equivalence
+  (max diff 1e-15), per-agent vs. plan_batch behavioural identity,
+  empty-input edge cases (6/6).
+- `tests/test_agents_lifecycle.py` — `_yrs_to_ticks` correctness across
+  4 eras, modern-era drift bounds, paleolithic 1-tick floor, default-cache
+  safety (7/7).
+- `tests/test_geopolitics.py` — haversine correctness, conflict
+  monotonicity in tension and trade, 5-nation BAU calibration, summit
+  cadence independence from nation count (5/5).
+- `tests/test_world.py` — haversine threshold semantics, snapshot
+  iteration safety, no-agent-loss invariant (4/4).
+- `tests/test_bridge.py` — old-vs-new behavioural identity at 410-agent
+  scale, equator parity, polar correction, lookup-build speedup,
+  hot-path speedup, edge cases (6/6).
+- Tightened `tests/test_macro.py` to validate against IPCC AR6
+  SSP2-4.5 to SSP3-7.0 envelope and Mauna Loa decadal mean (9/9 +
+  2 unit tests).
+
+### Changed — Documentation
+
+- README updated to reflect v0.2 implementation: replaced JEPA-training
+  description (analytic backprop instead of finite differences),
+  corrected macro-model parameter table (`λ = 1.236`, absorption = 0.50),
+  corrected conflict-model description (UCDP-prevalence calibration
+  instead of misleading per-dyad-year claim), expanded test inventory.
+- Added a short *Implementation Notes* section documenting the v0.2
+  domain-review pass and the calibration philosophy.
+
+### Migration notes
+
+- All public APIs are unchanged. `World`, `Agent`, `MacroModel`,
+  `GeopoliticalSystem`, `MacroAgentBridge`, `SharedWorldModel`,
+  `JEPAWorldModel` retain identical method signatures.
+- Internal: `MacroModel.CO2_PER_GT` renamed to
+  `MacroModel.PPM_PER_GTCO2` (the old name's units comment was wrong).
+  No external callers found.
+- Internal: `WorldEncoder.W1` etc. are now keys in `encoder.params`
+  rather than direct attributes. No external callers found.
+- Saved `experience_buffer` data from v0.1 will load but the trained
+  weights are not portable (different parameter layout).
+
 ## [0.1.0] - 2026-05-03
 
 ### Added
@@ -30,5 +435,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`SECURITY.md`** added — threat model, in-scope vs. out-of-scope mitigations, operator deployment checklist, and a vulnerability-disclosure process via GitHub's private vulnerability reporting.
 - Verified that `LLMModule.api_key` is not leaked through `get_status()`, `get_full_state()`, snapshot dumps, or `metadata.json`.
 
-[Unreleased]: https://github.com/GeoLambdaAI/world-genesis/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/GeoLambdaAI/world-genesis/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/GeoLambdaAI/world-genesis/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/GeoLambdaAI/world-genesis/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/GeoLambdaAI/world-genesis/releases/tag/v0.1.0

@@ -1,93 +1,164 @@
 """
-Shared JEPA World Model — Single model for all agents, batch inference.
+Shared JEPA World Model — single model, vectorized batch operations.
 
 ALL agents share one encoder + predictor. Individual differences come from
-different observations and traits. The PHYSICS is the same for everyone.
+different observations, not different parameters. The PHYSICS is shared.
 
-Batch processing: one matrix multiply instead of N separate ones. 50x speedup.
+This module is a thin wrapper around JEPAWorldModel from world_model.py.
+It adds vectorized batch primitives — most importantly plan_batch, which
+runs CEM planning for N agents in parallel using a single matmul-rich path
+through the shared predictor.
 
-Architecture: LeWorldModel (Maes et al. 2026, arXiv:2603.19312)
+Compatibility notes (v0.2 rewrite):
+- Training is delegated to JEPAWorldModel.train_step, which uses analytic
+  backpropagation with Adam — the previous v0.1 finite-difference path is
+  removed (it did not actually train the model).
+- All AdaLN action-conditioning weights are now updated, and SIGReg
+  gradients flow into the loss. See world_model.py for details.
+- Encoder/predictor parameters now live in `self.encoder.params` (a dict)
+  rather than as direct attributes (no `encoder.W1`). If you previously
+  accessed weights directly, switch to `self.encoder.params['W1']`.
+
+Architecture: LeWorldModel (Maes et al. 2026, arXiv:2603.19312).
 """
 
 import numpy as np
-from world_model import WorldEncoder, WorldPredictor, SIGReg
+from typing import Optional
+
+from world_model import JEPAWorldModel
 
 
 class SharedWorldModel:
     """
-    Single JEPA world model shared by all agents.
+    Single JEPA model shared across all agents.
 
-    Batch encode: (N, 40) -> (N, 24) in one matmul.
-    Batch CEM plan: vectorized across all agents simultaneously.
+    Single-agent inference path is delegated; the value-add of this class
+    is `plan_batch` and `encode_batch` — vectorized over N agents.
     """
 
     def __init__(self, obs_dim: int = 40, action_dim: int = 8,
-                 latent_dim: int = 24):
+                 latent_dim: int = 24,
+                 lr: float = 1e-3, lambda_reg: float = 0.01,
+                 sigreg_projections: int = 15,
+                 cem_horizon: int = 2, cem_samples: int = 12,
+                 cem_elites: int = 4, cem_iterations: int = 2,
+                 max_buffer_size: int = 20000,
+                 seed: int = 0):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.latent_dim = latent_dim
 
-        hidden_dim = latent_dim * 2
-        self.encoder = WorldEncoder(obs_dim, latent_dim, hidden_dim)
-        self.predictor = WorldPredictor(latent_dim, action_dim, hidden_dim)
-        self.sigreg = SIGReg(n_projections=15)
-
-        self.experience_buffer: list = []
-        self.max_buffer_size = 20000
-        self.learning_rate = 0.001
-        self.lambda_reg = 0.01
-        self.train_steps = 0
-
-        # Compatibility: CEM planner for per-agent planning calls
-        from world_model import CEMPlanner
-        self._compat_planner = CEMPlanner(
-            self.predictor, action_dim,
-            horizon=2, n_samples=12, n_elites=4, n_iterations=2
+        # Backbone: full JEPA world model. Provides encoder, predictor,
+        # CEM planner, training step (analytic backprop + Adam), metrics.
+        self._jepa = JEPAWorldModel(
+            obs_dim=obs_dim,
+            action_dim=action_dim,
+            latent_dim=latent_dim,
+            hidden_dim=latent_dim * 2,
+            lr=lr,
+            lambda_reg=lambda_reg,
+            sigreg_projections=sigreg_projections,
+            cem_horizon=cem_horizon,
+            cem_samples=cem_samples,
+            cem_elites=cem_elites,
+            cem_iterations=cem_iterations,
+            seed=seed,
         )
+        # Override buffer size (shared model needs more capacity)
+        self._jepa.max_buffer_size = max_buffer_size
 
-    def encode(self, observation: np.ndarray) -> np.ndarray:
-        """Single or batch encode. Compatible with Agent.decide_action()."""
-        return self.encoder.encode(observation)
+        # Dedicated RNG for batch CEM (reproducibility, doesn't leak global state)
+        self._batch_rng = np.random.RandomState(seed + 7)
 
-    def encode_batch(self, observations: np.ndarray) -> np.ndarray:
-        """Batch encode: (N, obs_dim) -> (N, latent_dim). Alias for encode."""
-        return self.encoder.encode(observations)
+    # ------------------------------------------------------------------
+    # Pass-through attribute access (compatibility with previous API)
+    # ------------------------------------------------------------------
 
-    def predict_next(self, z: np.ndarray, action: np.ndarray) -> np.ndarray:
-        """Single predict. Compatible with Agent code."""
-        return self.predictor.predict(z, action)
+    @property
+    def encoder(self):
+        return self._jepa.encoder
+
+    @property
+    def predictor(self):
+        return self._jepa.predictor
 
     @property
     def planner(self):
-        """CEM planner access for Agent.decide_action() compatibility."""
-        return self._compat_planner
+        """Per-agent CEM planner (compatibility shim)."""
+        return self._jepa.planner
+
+    @property
+    def experience_buffer(self):
+        return self._jepa.experience_buffer
+
+    @property
+    def train_steps(self):
+        return self._jepa.train_steps
+
+    @property
+    def max_buffer_size(self):
+        return self._jepa.max_buffer_size
+
+    @property
+    def lambda_reg(self):
+        return self._jepa.lambda_reg
+
+    # ------------------------------------------------------------------
+    # Single-agent operations (delegated to JEPAWorldModel)
+    # ------------------------------------------------------------------
+
+    def encode(self, observation: np.ndarray) -> np.ndarray:
+        """Single or batch encode. (D,) -> (latent,) or (N, D) -> (N, latent)."""
+        return self._jepa.encode(observation)
+
+    def predict_next(self, z: np.ndarray, action: np.ndarray) -> np.ndarray:
+        return self._jepa.predict_next(z, action)
 
     def store_experience(self, obs, action, next_obs):
-        """Single experience store. Compatible with Agent.execute_action()."""
-        self.experience_buffer.append((obs.copy(), action.copy(), next_obs.copy()))
-        if len(self.experience_buffer) > self.max_buffer_size:
-            self.experience_buffer.pop(0)
+        self._jepa.store_experience(obs, action, next_obs)
+
+    def train_step(self, batch_size: int = 64) -> dict:
+        """Train using analytic backprop. Returns loss dict."""
+        return self._jepa.train_step(batch_size)
 
     def get_world_understanding(self) -> dict:
-        """Compatible with Agent.to_dict()."""
-        return self.get_understanding()
+        return self._jepa.get_world_understanding()
+
+    def get_understanding(self) -> dict:
+        """Alias for get_world_understanding (backward compat)."""
+        return self._jepa.get_world_understanding()
+
+    # ------------------------------------------------------------------
+    # Vectorized batch operations (the value-add of this class)
+    # ------------------------------------------------------------------
+
+    def encode_batch(self, observations: np.ndarray) -> np.ndarray:
+        """Batch encode: (N, obs_dim) -> (N, latent_dim)."""
+        return self._jepa.encode(observations)
 
     def predict_batch(self, z: np.ndarray, actions: np.ndarray) -> np.ndarray:
-        """Batch predict: (N, latent_dim) + (N, action_dim) -> (N, latent_dim)."""
-        return self.predictor.predict(z, actions)
+        """Batch predict: (N, latent_dim), (N, action_dim) -> (N, latent_dim)."""
+        return self._jepa.predict_next(z, actions)
 
     def plan_batch(self, z_current: np.ndarray, z_goal: np.ndarray,
                    n_samples: int = 12, n_elites: int = 4,
-                   n_iterations: int = 2, horizon: int = 2) -> np.ndarray:
+                   n_iterations: int = 2, horizon: int = 2,
+                   action_bounds: tuple = (-1.0, 1.0)) -> np.ndarray:
         """
-        Vectorized CEM planning for ALL agents simultaneously.
+        Vectorized CEM planning for N agents simultaneously.
 
-        Instead of N separate CEM loops, ONE batched CEM:
-        - Sample (N, n_samples, horizon, action_dim) random actions
-        - Rollout through shared predictor in batch
-        - Per-agent elite selection and distribution update
+        Replaces N separate CEM loops with one batched rollout: at each CEM
+        iteration we forward N*n_samples trajectories of length `horizon`
+        through the shared predictor in single matmuls.
 
-        Returns: (N, action_dim) — first action for each agent.
+        Args:
+            z_current: (N, latent_dim) — each agent's current latent state
+            z_goal:    (N, latent_dim) — each agent's goal latent
+            n_samples, n_elites, n_iterations, horizon: CEM hyperparameters
+            action_bounds: per-dimension clipping range
+
+        Returns:
+            (N, action_dim) — first action of best plan for each agent.
         """
         N = z_current.shape[0]
         if N == 0:
@@ -98,115 +169,61 @@ class SharedWorldModel:
         H = horizon
         K = n_elites
 
-        mu = np.zeros((N, H, A), dtype=np.float32)
-        sigma = np.ones((N, H, A), dtype=np.float32) * 0.5
+        mu = np.zeros((N, H, A), dtype=np.float64)
+        sigma = np.ones((N, H, A), dtype=np.float64) * 0.5
+
+        z_current = z_current.astype(np.float64)
+        z_goal = z_goal.astype(np.float64)
 
         for _ in range(n_iterations):
-            # Sample: (N, S, H, A)
-            noise = np.random.randn(N, S, H, A).astype(np.float32)
+            # Sample (N, S, H, A) candidate action sequences
+            noise = self._batch_rng.randn(N, S, H, A)
             actions = mu[:, None, :, :] + sigma[:, None, :, :] * noise
-            np.clip(actions, -1.0, 1.0, out=actions)
+            np.clip(actions, action_bounds[0], action_bounds[1], out=actions)
 
-            # Rollout all N*S trajectories through predictor
-            # Start from z_current tiled S times: (N*S, latent_dim)
+            # Initial latents tiled S times: (N*S, latent_dim)
             z = np.broadcast_to(z_current[:, None, :],
                                 (N, S, self.latent_dim)).reshape(N * S, -1).copy()
 
+            # Roll out H steps through the predictor in one batched call per step
             for t in range(H):
-                a = actions[:, :, t, :].reshape(N * S, A)
-                z = self.predictor.predict(z, a)
+                a_t = actions[:, :, t, :].reshape(N * S, A)
+                z = self._jepa.predict_next(z, a_t)
 
-            # Cost: squared distance to goal in latent space
+            # Cost: squared distance to per-agent goal
             z_final = z.reshape(N, S, self.latent_dim)
             costs = np.sum((z_final - z_goal[:, None, :]) ** 2, axis=-1)  # (N, S)
 
-            # Elite selection per agent
+            # Per-agent elite selection (K best per agent)
             elite_idx = np.argpartition(costs, K, axis=1)[:, :K]  # (N, K)
-
-            # Gather elite actions using advanced indexing
-            batch_idx = np.arange(N)[:, None].repeat(K, axis=1)  # (N, K)
+            batch_idx = np.arange(N)[:, None].repeat(K, axis=1)
             elite_actions = actions[batch_idx, elite_idx]  # (N, K, H, A)
 
-            # Update distribution
+            # Refit Gaussian per agent
             mu = elite_actions.mean(axis=1)
             sigma = elite_actions.std(axis=1) + 0.01
 
-        # Return first action of best sequence
-        return mu[:, 0, :]  # (N, A)
+        # Return first action of mean elite plan per agent
+        return mu[:, 0, :].astype(np.float32)
 
     def store_experience_batch(self, obs: np.ndarray, actions: np.ndarray,
-                                next_obs: np.ndarray):
-        """Store experiences from multiple agents."""
-        n = min(len(obs), 50)  # Cap per-tick storage
+                                next_obs: np.ndarray, cap: int = 50):
+        """
+        Store experiences from N agents in one call.
+
+        Args:
+            obs:      (N, obs_dim)
+            actions:  (N, action_dim)
+            next_obs: (N, obs_dim)
+            cap: max number of agents to store per tick (perf safeguard)
+        """
+        buf = self._jepa.experience_buffer
+        max_size = self._jepa.max_buffer_size
+        n = min(len(obs), cap)
         for i in range(n):
-            self.experience_buffer.append((obs[i].copy(), actions[i].copy(),
-                                            next_obs[i].copy()))
-        if len(self.experience_buffer) > self.max_buffer_size:
-            self.experience_buffer = self.experience_buffer[-self.max_buffer_size:]
+            buf.append((obs[i].copy(), actions[i].copy(), next_obs[i].copy()))
 
-    def train_step(self, batch_size: int = 64):
-        """Train shared model using directional finite-difference gradients."""
-        if len(self.experience_buffer) < batch_size:
-            return
-
-        indices = np.random.choice(len(self.experience_buffer), batch_size, replace=False)
-        obs = np.array([self.experience_buffer[i][0] for i in indices])
-        actions = np.array([self.experience_buffer[i][1] for i in indices])
-        next_obs = np.array([self.experience_buffer[i][2] for i in indices])
-
-        z = self.encoder.encode(obs)
-        z_next_true = self.encoder.encode(next_obs)
-        z_next_pred = self.predictor.predict(z, actions)
-
-        pred_loss = float(np.mean((z_next_pred - z_next_true) ** 2))
-        reg_loss = self.sigreg.compute(z) if len(z) > 2 else 0.0
-        total_loss = pred_loss + self.lambda_reg * reg_loss
-
-        # Directional gradient estimation (LeWM approach)
-        self._estimate_gradients(obs, actions, next_obs)
-        self.train_steps += 1
-
-    def _estimate_gradients(self, obs, actions, next_obs):
-        """Directional finite-difference gradients (3 directions per weight)."""
-        n_directions = 3
-        eps = 0.001
-
-        weight_sets = [
-            (self.encoder, ['W1', 'W2', 'W3', 'b1', 'b2', 'b3']),
-            (self.predictor, ['W_latent', 'W_hidden', 'W_out']),
-        ]
-
-        for module, weight_names in weight_sets:
-            for wname in weight_names:
-                W = getattr(module, wname)
-                grad = np.zeros_like(W)
-
-                for _ in range(n_directions):
-                    direction = np.random.randn(*W.shape).astype(W.dtype)
-                    direction /= (np.linalg.norm(direction) + 1e-10)
-
-                    setattr(module, wname, W + eps * direction)
-                    z_p = self.encoder.encode(obs)
-                    zn_p = self.predictor.predict(z_p, actions)
-                    zt_p = self.encoder.encode(next_obs)
-                    loss_plus = float(np.mean((zn_p - zt_p) ** 2))
-
-                    setattr(module, wname, W - eps * direction)
-                    z_m = self.encoder.encode(obs)
-                    zn_m = self.predictor.predict(z_m, actions)
-                    zt_m = self.encoder.encode(next_obs)
-                    loss_minus = float(np.mean((zn_m - zt_m) ** 2))
-
-                    grad += ((loss_plus - loss_minus) / (2 * eps)) * direction
-                    setattr(module, wname, W)
-
-                grad /= n_directions
-                setattr(module, wname, W - self.learning_rate * grad)
-
-    def get_understanding(self) -> dict:
-        return {
-            "train_steps": self.train_steps,
-            "buffer_size": len(self.experience_buffer),
-            "latent_dim": self.latent_dim,
-            "model_maturity": min(1.0, self.train_steps / 500.0),
-        }
+        # Keep buffer below max_size — drop oldest in O(1) blocks
+        if len(buf) > max_size:
+            overflow = len(buf) - max_size
+            del buf[:overflow]

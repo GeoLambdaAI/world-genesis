@@ -98,12 +98,24 @@ class MacroModel:
     FORCING_COEFF = 5.35            # W/m^2, Myhre et al. 1998
     CLIMATE_SENSITIVITY = 3.0       # deg C per 2xCO2, IPCC AR6 WG1 Table 7.SM.1
     OCEAN_HEAT_CAPACITY = 7.0       # W*yr/m^2/degC, Held et al. 2010 (lower end)
-    CLIMATE_FEEDBACK = 1.1          # W/m^2/degC, IPCC AR6 (lower end = higher sensitivity)
+    # CLIMATE_FEEDBACK is chosen so the equilibrium response to 2xCO2 equals
+    # CLIMATE_SENSITIVITY: F_2x = 5.35 * ln(2) = 3.708 W/m^2; lambda = F_2x / ECS.
+    # FIX (v0.2): Previous value 1.1 produced an emergent ECS of 3.37 deg C,
+    # at the upper end of the IPCC likely range and inconsistent with the
+    # declared CLIMATE_SENSITIVITY constant.
+    CLIMATE_FEEDBACK = 1.236        # W/m^2/degC, calibrated to ECS=3.0 (IPCC AR6 best)
     DEEP_OCEAN_COUPLING = 0.7       # W/m^2/degC, Gregory 2000
     DEEP_OCEAN_CAPACITY = 100.0     # W*yr/m^2/degC (much larger heat reservoir)
 
     # --- Carbon cycle ---
-    NATURAL_ABSORPTION_RATE = 0.44  # Fraction of emissions absorbed, Friedlingstein 2024
+    # Decadal mean fraction of emissions taken up by combined land+ocean sinks.
+    # Friedlingstein et al. 2024 Global Carbon Budget: 2014-2023 mean is ~57%
+    # absorbed (43% airborne fraction). 0.50 is a conservative central value
+    # accounting for inter-annual variability and the projected decline of
+    # sinks with continued warming. FIX (v0.2): previous 0.44 was at the
+    # lower end of the interannual range (single-year airborne fraction), not
+    # the appropriate decadal-mean value for a long-horizon model.
+    NATURAL_ABSORPTION_RATE = 0.50  # Fraction absorbed, Friedlingstein 2024 decadal
     ABSORPTION_TEMP_SENSITIVITY = 0.06  # Reduction per degC warming (weakening sink)
 
     # --- Resource depletion ---
@@ -112,7 +124,10 @@ class MacroModel:
 
     # --- Socioeconomic ---
     BASE_EMISSION_RATE = 42.0       # GtCO2/yr baseline 2025, source: GCP 2024
-    CO2_PER_GT = 0.128              # ppm per GtC (= per 3.67 GtCO2), IPCC
+    # Conversion: 1 ppm CO2 corresponds to ~7.81 GtCO2 in atmosphere
+    # (derived from atmospheric mass / molar mass ratios; equivalently 2.13 GtC).
+    # IPCC AR6 WG1 Annex VII. -> 1 GtCO2 = 0.1280 ppm.
+    PPM_PER_GTCO2 = 0.1280          # ppm per GtCO2, IPCC AR6 WG1 Annex VII
     POP_GROWTH_BASE = 0.009         # Base population growth rate, UN WPP
     TECH_GROWTH_BASE = 0.015        # Base tech growth per year
 
@@ -268,10 +283,14 @@ class MacroModel:
         )
         natural_absorption = fossil_emissions * max(0.2, absorption_efficiency)
 
-        # Net CO2 change (GtCO2 -> ppm conversion)
-        # 1 GtC ≈ 0.128 ppm CO2, 1 GtCO2 = 1/3.67 GtC
-        net_emissions_gtc = (fossil_emissions - natural_absorption) / 3.67
-        dy[_IDX["co2"]] = net_emissions_gtc * self.CO2_PER_GT  # Source: IPCC
+        # Net CO2 change in ppm/yr.
+        # FIX (v0.2): Previous code divided by 3.67 (GtCO2 -> GtC) and then
+        # multiplied by 0.128, but 0.128 is already ppm/GtCO2 — the conversion
+        # was applied twice, underestimating the CO2 rise by a factor of 3.67.
+        # Verified against current Mauna Loa observations (~2.5-3 ppm/yr at
+        # 42 GtCO2/yr * ~50% airborne fraction).
+        net_emissions_gtco2 = fossil_emissions - natural_absorption
+        dy[_IDX["co2"]] = net_emissions_gtco2 * self.PPM_PER_GTCO2
 
         # ================================================================
         # 2. CLIMATE: Two-layer energy balance model

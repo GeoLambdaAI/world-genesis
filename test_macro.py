@@ -1,121 +1,201 @@
 """
-Standalone test for MacroModel: run BAU scenario 2025 -> 2100.
+Standalone validation tests for MacroModel.
 
-Validates:
-- CO2 should reach ~550-700 ppm by 2100 (BAU)
-- Temperature anomaly should reach +2.5-4.0 deg C by 2100
-- Social tension should rise significantly
-- Fossil fuels should show Hubbert-style peak and decline
-- Population should approach ~10-11 billion then plateau/decline
+Anchors validation against IPCC AR6 SSP scenarios and observed Mauna Loa
+trends rather than the wide permissive ranges of v0.1.
+
+Reference scenarios (IPCC AR6 WG1 Table 4.5, projected 2081-2100):
+    SSP1-2.6  (low):     445 ppm,  +1.8 deg C,  ~0.44 m SLR
+    SSP2-4.5  (mid):     603 ppm,  +2.7 deg C,  ~0.55 m SLR
+    SSP3-7.0  (high):    867 ppm,  +3.6 deg C,  ~0.71 m SLR
+    SSP5-8.5  (extreme): 1135 ppm, +4.4 deg C,  ~0.84 m SLR
+
+The model's "no agent feedback" run represents BAU with technology and
+renewable growth but no aggressive mitigation. We anchor to the
+SSP2-4.5 to SSP3-7.0 range as a reasonable BAU envelope.
+
+Mauna Loa observed CO2 growth rate (NOAA GML, decadal mean 2014-2024):
+    2.4-3.0 ppm/yr  -- the most stringent test, since this anchors the
+    carbon-cycle calibration.
 """
 
 import sys
 sys.path.insert(0, '.')
-from macro import MacroModel, MacroState
+from macro import MacroModel
 
 
-def run_bau_scenario():
-    """Run Business-As-Usual scenario from 2025 to 2100."""
-    model = MacroModel(config={"dt_years": 1.0 / 12.0})  # Monthly steps
-
-    # No agent feedback = BAU defaults
+def run_bau_scenario(verbose: bool = True):
+    """Run BAU scenario from 2025 to 2100, return validation success."""
+    model = MacroModel(config={"dt_years": 1.0 / 12.0})
     bau_feedback = {}
 
-    print("=" * 80)
-    print("MACRO MODEL BAU SCENARIO: 2025 -> 2100")
-    print("=" * 80)
+    if verbose:
+        print("=" * 90)
+        print("MACRO MODEL BAU SCENARIO: 2025 -> 2100")
+        print("=" * 90)
+        header = (f"{'Year':>6} {'CO2':>7} {'dCO2/yr':>8} {'T':>5} {'SLR':>6} "
+                  f"{'Foss':>6} {'Pop(B)':>7} {'GDP':>6} {'Tens':>6} {'Renew':>6}")
+        print(header)
+        print("-" * len(header))
 
-    header = f"{'Year':>6} {'CO2':>7} {'Temp':>6} {'SLR':>6} {'Fossil':>7} {'Mineral':>7} {'Poll':>6} {'Pop(B)':>7} {'GDP':>6} {'Ineq':>6} {'Tension':>7} {'Tech':>6} {'Renew':>6} {'Food':>6} {'Welfare':>7}"
-    print(header)
-    print("-" * len(header))
+    # Track 1-year CO2 growth rate near 2030 (baseline anchor)
+    co2_2029 = None
+    co2_2030 = None
 
-    years_data = []
     target_years = list(range(2025, 2101, 5))
+    prev_co2 = model.state.co2_ppm
+    prev_year = model.state.year
     step_count = 0
 
     while model.state.year < 2100.5:
         model.step(bau_feedback)
         step_count += 1
 
-        # Print every 5 years
+        # Sample around 2030 to compute precise 1-yr growth rate
+        if abs(model.state.year - 2029.0) < 0.05 and co2_2029 is None:
+            co2_2029 = model.state.co2_ppm
+        if abs(model.state.year - 2030.0) < 0.05 and co2_2030 is None:
+            co2_2030 = model.state.co2_ppm
+
         year_rounded = round(model.state.year)
         if year_rounded in target_years and abs(model.state.year - year_rounded) < 0.05:
             s = model.state
-            print(f"{s.year:6.1f} {s.co2_ppm:7.1f} {s.temperature_anomaly:6.2f} "
-                  f"{s.sea_level_rise_m:6.3f} {s.fossil_fuels:7.3f} {s.minerals_global:7.3f} "
-                  f"{s.persistent_pollution:6.3f} {s.global_population_billions:7.2f} "
-                  f"{s.global_gdp_index:6.3f} {s.inequality_index:6.3f} "
-                  f"{s.social_tension:7.3f} {s.technology_level:6.3f} "
-                  f"{s.renewable_fraction:6.3f} {s.food_production_index:6.3f} "
-                  f"{s.human_welfare_index:7.3f}")
+            years_elapsed = s.year - prev_year
+            dco2_per_yr = (s.co2_ppm - prev_co2) / years_elapsed if years_elapsed > 0 else 0
+            prev_co2 = s.co2_ppm
+            prev_year = s.year
+            if verbose:
+                print(f"{s.year:6.1f} {s.co2_ppm:7.1f} {dco2_per_yr:8.2f} "
+                      f"{s.temperature_anomaly:5.2f} {s.sea_level_rise_m:6.3f} "
+                      f"{s.fossil_fuels:6.3f} {s.global_population_billions:7.2f} "
+                      f"{s.global_gdp_index:6.3f} {s.social_tension:6.3f} "
+                      f"{s.renewable_fraction:6.3f}")
             target_years.remove(year_rounded)
-            years_data.append(model.get_summary())
 
-    print()
-    print(f"Total ODE steps: {step_count}")
-    print()
+    if verbose:
+        print(f"\nTotal ODE steps: {step_count}")
 
-    # Validation
+    # ----- VALIDATION -----
     s = model.state
-    print("=" * 60)
-    print("VALIDATION (2100 values)")
-    print("=" * 60)
+    if verbose:
+        print("\n" + "=" * 70)
+        print("VALIDATION (IPCC AR6 SSP2-4.5 to SSP3-7.0 envelope)")
+        print("=" * 70)
 
     checks = []
 
-    # CO2: BAU should reach 550-750 ppm
-    ok = 500 <= s.co2_ppm <= 800
-    checks.append(ok)
-    print(f"CO2: {s.co2_ppm:.1f} ppm  (target: 500-800)  {'PASS' if ok else 'FAIL'}")
+    # Anchor 1: CO2 growth rate near 2030 ~ Mauna Loa observation
+    # NOAA GML decadal mean 2014-2024: 2.4-3.0 ppm/yr
+    # This is the strictest test of the carbon cycle.
+    if co2_2029 and co2_2030:
+        dco2_anchor = co2_2030 - co2_2029
+        ok = 2.0 <= dco2_anchor <= 3.5
+        checks.append(("CO2 growth rate ~2030", ok, f"{dco2_anchor:.2f} ppm/yr",
+                       "2.0-3.5 (Mauna Loa decadal: 2.4-3.0)"))
 
-    # Temperature: +2.0-5.0 C
-    ok = 2.0 <= s.temperature_anomaly <= 5.0
-    checks.append(ok)
-    print(f"Temperature: +{s.temperature_anomaly:.2f} C  (target: +2.0-5.0)  {'PASS' if ok else 'FAIL'}")
+    # Anchor 2: CO2 in 2100 between SSP2-4.5 and SSP3-7.0
+    ok = 600 <= s.co2_ppm <= 800
+    checks.append(("CO2 2100", ok, f"{s.co2_ppm:.0f} ppm",
+                   "600-800 (SSP2-4.5 to SSP3-7.0)"))
 
-    # Population: 8-12 billion
-    ok = 7.0 <= s.global_population_billions <= 13.0
-    checks.append(ok)
-    print(f"Population: {s.global_population_billions:.2f} B  (target: 7-13)  {'PASS' if ok else 'FAIL'}")
+    # Anchor 3: Temperature anomaly 2100 between SSP2-4.5 and SSP3-7.0
+    ok = 2.4 <= s.temperature_anomaly <= 3.8
+    checks.append(("Temperature 2100", ok, f"+{s.temperature_anomaly:.2f} degC",
+                   "+2.4 to +3.8 (SSP2-4.5 to SSP3-7.0)"))
 
-    # Fossil fuels: should have declined significantly
-    ok = 0.1 <= s.fossil_fuels <= 0.7
-    checks.append(ok)
-    print(f"Fossil fuels: {s.fossil_fuels:.3f}  (target: 0.1-0.7)  {'PASS' if ok else 'FAIL'}")
+    # Anchor 4: Sea level rise 2100 within SSP2-4.5 to SSP3-7.0 likely range
+    # Note: simple thermal-expansion proxy; true ice-sheet dynamics not modelled
+    ok = 0.40 <= s.sea_level_rise_m <= 0.85
+    checks.append(("Sea level rise 2100", ok, f"{s.sea_level_rise_m:.2f} m",
+                   "0.40-0.85 (SSP2-4.5 to SSP3-7.0 likely)"))
 
-    # Social tension: should have risen
-    ok = s.social_tension > 0.3
-    checks.append(ok)
-    print(f"Social tension: {s.social_tension:.3f}  (target: >0.3)  {'PASS' if ok else 'FAIL'}")
+    # Anchor 5: Population 2100 — UN WPP medium ~10.4B, Vollset 2020 ~8.8B
+    # The model's lower endogenous population reflects strong demographic
+    # transition with rising tech. Allow either projection.
+    ok = 7.5 <= s.global_population_billions <= 11.0
+    checks.append(("Population 2100", ok,
+                   f"{s.global_population_billions:.2f} B",
+                   "7.5-11.0 (Vollset 2020 to UN WPP 2024)"))
 
-    # Sea level: 0.3-1.5m by 2100
-    ok = 0.2 <= s.sea_level_rise_m <= 2.0
-    checks.append(ok)
-    print(f"Sea level rise: {s.sea_level_rise_m:.3f} m  (target: 0.2-2.0)  {'PASS' if ok else 'FAIL'}")
+    # Anchor 6: Fossil fuels declined significantly but not exhausted
+    ok = 0.20 <= s.fossil_fuels <= 0.65
+    checks.append(("Fossil fuels remaining 2100", ok, f"{s.fossil_fuels:.3f}",
+                   "0.20-0.65 (significant depletion)"))
 
-    # Renewable fraction: should have grown
-    ok = s.renewable_fraction > 0.3
-    checks.append(ok)
-    print(f"Renewable fraction: {s.renewable_fraction:.3f}  (target: >0.3)  {'PASS' if ok else 'FAIL'}")
+    # Anchor 7: Renewable fraction substantial
+    ok = s.renewable_fraction > 0.50
+    checks.append(("Renewable fraction 2100", ok,
+                   f"{s.renewable_fraction:.3f}", ">0.50"))
 
-    # Technology: should have grown
-    ok = s.technology_level > 1.5
-    checks.append(ok)
-    print(f"Technology level: {s.technology_level:.3f}  (target: >1.5)  {'PASS' if ok else 'FAIL'}")
+    # Anchor 8: Social tension rises (consistent with Earth4All trajectory)
+    ok = s.social_tension > 0.40
+    checks.append(("Social tension 2100", ok, f"{s.social_tension:.3f}", ">0.40"))
 
-    print()
-    passed = sum(checks)
+    # Anchor 9: Technology grew substantially
+    ok = s.technology_level > 1.8
+    checks.append(("Technology level 2100", ok,
+                   f"{s.technology_level:.3f}", ">1.8"))
+
+    if verbose:
+        for label, ok, value, expected in checks:
+            mark = "PASS" if ok else "FAIL"
+            print(f"  [{mark}] {label:<30s} {value:<20s} (expect {expected})")
+
+    passed = sum(1 for _, ok, _, _ in checks if ok)
     total = len(checks)
-    print(f"Results: {passed}/{total} checks passed")
 
-    if passed == total:
-        print("ALL VALIDATIONS PASSED!")
-    else:
-        print(f"WARNING: {total - passed} checks failed")
+    if verbose:
+        print(f"\nResults: {passed}/{total} checks passed")
+        if passed == total:
+            print("ALL VALIDATIONS PASSED — model behavior consistent with IPCC AR6 BAU envelope")
+        else:
+            print(f"WARNING: {total - passed} checks failed")
 
     return passed == total
 
 
+def test_climate_sensitivity_consistency():
+    """Verify that emergent ECS matches the declared CLIMATE_SENSITIVITY."""
+    import numpy as np
+    print("\n" + "=" * 70)
+    print("UNIT TEST: emergent ECS == declared CLIMATE_SENSITIVITY")
+    print("=" * 70)
+    F_2x = MacroModel.FORCING_COEFF * np.log(2.0)
+    ECS_emergent = F_2x / MacroModel.CLIMATE_FEEDBACK
+    ECS_declared = MacroModel.CLIMATE_SENSITIVITY
+    print(f"  F_2xCO2 (Myhre 1998):   {F_2x:.3f} W/m^2")
+    print(f"  CLIMATE_FEEDBACK:       {MacroModel.CLIMATE_FEEDBACK} W/m^2/degC")
+    print(f"  Emergent ECS:           {ECS_emergent:.3f} degC")
+    print(f"  Declared CLIMATE_SENS:  {ECS_declared} degC")
+    drift = abs(ECS_emergent - ECS_declared) / ECS_declared
+    print(f"  Drift:                  {drift:.1%}")
+    ok = drift < 0.02  # within 2%
+    print(f"  {'PASS' if ok else 'FAIL'}: emergent and declared ECS within 2%")
+    return ok
+
+
+def test_carbon_cycle_unit_anchor():
+    """Smoke test: at typical 2025 emissions, dCO2/dt should be near observed."""
+    print("\n" + "=" * 70)
+    print("UNIT TEST: carbon cycle produces observed Mauna Loa rate")
+    print("=" * 70)
+    model = MacroModel(config={"dt_years": 1.0 / 12.0})
+    # Force one ODE step with default feedback at startwerten
+    y0 = model._state_to_vector()
+    dy = model._ode_system(0, y0, {})
+    dco2_per_yr = dy[0]  # _IDX["co2"]
+    print(f"  Modelled dCO2/dt at 2025 startwerten: {dco2_per_yr:.2f} ppm/yr")
+    print(f"  Mauna Loa 2014-2024 decadal mean:    2.4-3.0 ppm/yr")
+    ok = 2.0 <= dco2_per_yr <= 3.5
+    print(f"  {'PASS' if ok else 'FAIL'}: within 2.0-3.5 envelope")
+    return ok
+
+
 if __name__ == "__main__":
     success = run_bau_scenario()
-    sys.exit(0 if success else 1)
+    success_ecs = test_climate_sensitivity_consistency()
+    success_cc = test_carbon_cycle_unit_anchor()
+    print("\n" + "=" * 70)
+    overall = success and success_ecs and success_cc
+    print(f"OVERALL: {'ALL PASS' if overall else 'SOME FAILED'}")
+    sys.exit(0 if overall else 1)
