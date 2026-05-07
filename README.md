@@ -196,7 +196,7 @@ where `z_hat_{t+1} = Predictor(Encoder(x_t), a_t)` and `z_{t+1} = Encoder(x_{t+1
 
 **Agent decision loop** (Kahneman's Dual Process Theory):
 - **System 1, symbolic** (every tick): Maslow-style needs hierarchy weights
-  ten goal candidates by trait-modulated priorities (eat, heal, work, trade,
+  eleven goal candidates by trait-modulated priorities (eat, heal, work, trade,
   build_business, socialize, reproduce, explore, research, govern, migrate);
   argmax selects the active goal.
 - **System 1, neural** (JEPA, every PLAN_INTERVAL=3 ticks): observe → encode
