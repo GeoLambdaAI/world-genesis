@@ -11,9 +11,7 @@
 **A physics-based, AI-driven simulation of human civilization on Planet Earth —
 from the Out-of-Africa migration 70,000 years ago to climate futures beyond 2100.**
 
-Each autonomous agent uses a JEPA world model (LeCun 2022; Maes et al. 2026)
-to perceive, plan, and act. Agents eat, trade, build, reproduce, form societies,
-wage wars, and evolve — all emergently, on real Earth geography with real climate data.
+Each autonomous agent uses a JEPA world model (LeCun 2022; Maes et al. 2026) to perceive its environment and plan goal-directed movement in latent space. Goal selection follows a Maslow-style needs hierarchy modulated by personality traits — a dual-process architecture (Kahneman 2011) combining symbolic utility-AI for what-to-do with neural latent planning for how-to-move. Settlements, nations, trade networks, conflicts, and trait evolution are fully emergent on real Earth geography with real climate data.
 
 [![License: AGPL v3+](https://img.shields.io/badge/License-AGPL%20v3+-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -197,8 +195,15 @@ L = ||z_hat_{t+1} - z_{t+1}||^2 + lambda * SIGReg(Z)
 where `z_hat_{t+1} = Predictor(Encoder(x_t), a_t)` and `z_{t+1} = Encoder(x_{t+1})`.
 
 **Agent decision loop** (Kahneman's Dual Process Theory):
-- **System 1** (JEPA, every tick): observe → encode → needs evaluation → CEM plan → execute
-- **System 2** (LLM, social actions only): trade negotiation, governance speech, social dialogue
+- **System 1, symbolic** (every tick): Maslow-style needs hierarchy weights
+  ten goal candidates by trait-modulated priorities (eat, heal, work, trade,
+  build_business, socialize, reproduce, explore, research, govern, migrate);
+  argmax selects the active goal.
+- **System 1, neural** (JEPA, every PLAN_INTERVAL=3 ticks): observe → encode
+  current state → encode goal-target observation → CEM plan in latent space
+  → extract movement bias and intensity; cached between re-plans.
+- **System 2** (LLM, optional, social actions only): trade negotiation,
+  governance speech, social dialogue.
 
 ### 2. System Dynamics — Macro Model
 
