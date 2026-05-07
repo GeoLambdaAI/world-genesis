@@ -11,7 +11,7 @@
 **A physics-based, AI-driven simulation of human civilization on Planet Earth —
 from the Out-of-Africa migration 70,000 years ago to climate futures beyond 2100.**
 
-Each autonomous agent uses a JEPA world model (LeCun 2022; Maes et al. 2026) to perceive its environment and plan goal-directed movement in latent space. Goal selection follows a Maslow-style needs hierarchy modulated by personality traits — a dual-process architecture (Kahneman 2011) combining symbolic utility-AI for what-to-do with neural latent planning for how-to-move. Settlements, nations, trade networks, conflicts, and trait evolution are fully emergent on real Earth geography with real climate data.
+Each autonomous agent uses a JEPA world model (LeCun 2022; Maes et al. 2026) to perceive its environment and plan goal-directed movement in latent space. Goal selection follows a Maslow-style needs hierarchy modulated by personality traits — a dual-process architecture (Kahneman 2011) combining symbolic utility-AI for what-to-do with neural latent planning for how-to-move. Settlements, nations, trade networks, conflicts, and trait evolution are fully emergent on our planet's surface with real climate data.
 
 [![License: AGPL v3+](https://img.shields.io/badge/License-AGPL%20v3+-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -296,9 +296,9 @@ cap, base rate, and tension coefficient. Distance calculations use haversine
 (degree-equivalents) to preserve threshold semantics while correcting the
 polar distortion of euclidean lat/lng.
 
-### 4. Earth System — Real Geography
+### 4. Earth System — Planet's surface
 
-The simulation runs on real Earth geography derived from multiple datasets.
+The simulation runs on our planet's surface derived from multiple datasets.
 
 **Data sources:**
 - Natural Earth (naturalearthdata.com) — 110m land polygons, rivers, lakes.
