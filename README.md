@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <sub><em>This simulation was developed primarily with Claude Code, Anthropic's agentic CLI powered by the Claude Opus 4.7 model. The collaboration served as a real-world stress test of the latest coding LLM through extensive prompt engineering.</em></sub>
+  <sub><em>This simulation was developed primarily with Claude Code, Anthropic's agentic CLI, using both Claude Opus 4.6 and Opus 4.7. The collaboration served as a real-world stress test of the latest coding LLM through extensive prompt engineering.</em></sub>
 </p>
 
 # World Genesis: Autonomous Agent Civilization Simulator
