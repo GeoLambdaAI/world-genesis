@@ -13,6 +13,7 @@ from the Out-of-Africa migration 70,000 years ago to climate futures beyond 2100
 
 Each autonomous agent uses a JEPA world model (LeCun 2022; Maes et al. 2026) to perceive its environment and plan goal-directed movement in latent space. Goal selection follows a Maslow-style needs hierarchy modulated by personality traits — a dual-process architecture (Kahneman 2011) combining symbolic utility-AI for what-to-do with neural latent planning for how-to-move. Settlements, nations, trade networks, conflicts, and trait evolution are fully emergent on our planet's surface with real climate data.
 
+
 [![License: AGPL v3+](https://img.shields.io/badge/License-AGPL%20v3+-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://github.com/GeoLambdaAI/world-genesis/actions/workflows/test.yml/badge.svg)](https://github.com/GeoLambdaAI/world-genesis/actions/workflows/test.yml)
@@ -29,6 +30,8 @@ Each autonomous agent uses a JEPA world model (LeCun 2022; Maes et al. 2026) to 
 > for details. The `Built primarily with Claude Code` framing in the header
 > applies to the v0.1.0 generation; the v0.2.0 / v0.2.1 calibration passes
 > were separate human-led reviews with LLM assistance.
+> 
+> **Tested on:** Ubuntu 22.04 ARM, Python 3.11. macOS: should work; if port 5000 is blocked by AirPlay, change to 5001 in `app.py`. Windows: untested, please file issues.
 
 <p align="center">
   <a href="static/world-genesis.jpg">
