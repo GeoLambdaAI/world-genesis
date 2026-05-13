@@ -111,8 +111,16 @@ Each autonomous agent uses a JEPA world model (LeCun 2022; Maes et al. 2026) to 
 ### Installation
 
 ```bash
-cd interactive_simulation
+cd world-genesis-main
 pip install numpy flask flask-socketio eventlet scipy networkx shapely requests
+```
+
+### Installation (macOS, recommended via Conda)
+
+```bash
+conda create -n worldgenesis python=3.11 -y
+conda activate worldgenesis
+pip install -r requirements.txt
 ```
 
 ### Generate Earth Data (one-time)
