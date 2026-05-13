@@ -31,9 +31,11 @@ Each autonomous agent uses a JEPA world model (LeCun 2022; Maes et al. 2026) to 
 > applies to the v0.1.0 generation; the v0.2.0 / v0.2.1 calibration passes
 > were separate human-led reviews with LLM assistance.
 > 
-> **Tested on:** Ubuntu 22.04 ARM, Python 3.11.
-> macOS: requires Python 3.11+ explicitly (`python3.11 -m venv .venv`); Python 3.9 from miniconda will fail due to eventlet/kqueue incompatibility. Change port from 5000 to 5001 in `app.py` if AirPlay is active.
-> Windows: untested, please file issues.
+> **Tested on:**
+> - Ubuntu 22.04 ARM, Python 3.11.
+> - macOS: requires Python 3.11+ (e.g. `conda create -n worldgenesis python=3.11` or `python3.11 -m venv .venv`); Python 3.9 from miniconda base will fail due to eventlet/kqueue incompatibility. Disable AirPlay Receiver or change port from 5000 to 5001 in `app.py`.
+> 
+> - Windows: untested, please file issues.
 
 <p align="center">
   <a href="static/world-genesis.jpg">
