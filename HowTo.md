@@ -42,7 +42,7 @@ A practical, copy-pastable guide. The [`README.md`](README.md) explains
 
 ```bash
 # From a fresh clone:
-cd interactive_simulation
+cd world-genesis-main
 
 # Always use a virtual environment — the simulator pulls in eventlet,
 # which monkey-patches the standard library and will surprise you in a
