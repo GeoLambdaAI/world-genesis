@@ -30,7 +30,7 @@ A practical, copy-pastable guide. The [`README.md`](README.md) explains
 
 | Requirement | Notes |
 |---|---|
-| **Python 3.11, 3.12, or 3.13** | `python --version` must print one of these. macOS users may need `python3`. |
+| **Python 3.11, 3.12, or 3.13** | `python --version` must print one of these. macOS, recommended via Conda |
 | **~50 MB free disk** | 17 MB pre-computed Earth data + ~25 MB Python deps + headroom for run logs |
 | **Modern browser** | Chrome, Firefox, Safari, Edge — anything that runs Leaflet.js |
 | **Internet access (one-off)** | Only required by `generate_present_day_data.py` to fetch World Bank / NOAA / NASA values. Everything afterwards is offline. |
@@ -63,6 +63,13 @@ pip install -e ".[dev]"   # adds pytest, pytest-cov, ruff, mypy
 
 You can install both: `pip install -e ".[viz,dev]"`.
 
+## Installation (macOS, recommended via Conda)
+
+```bash
+conda create -n worldgenesis python=3.11 -y
+conda activate worldgenesis
+pip install -r requirements.txt
+```
 ---
 
 ## 3. Generate the Earth data
